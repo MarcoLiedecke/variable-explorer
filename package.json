@@ -3,7 +3,7 @@
   "displayName": "Variable Explorer",
   "description": "A powerful variable inspection and editing tool for Python development, inspired by Spyder's Variable Explorer",
   "version": "0.1.0",
-  "publisher": "MarcoLiedecke",
+  "publisher": "VariableExplorer",
   "author": {
     "name": "Marco Liedecke"
   },
