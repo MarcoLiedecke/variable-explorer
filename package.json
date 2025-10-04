@@ -1,0 +1,83 @@
+{
+  "name": "variable-explorer",
+  "displayName": "Variable Explorer",
+  "description": "Spyder-like variable explorer for VS Code",
+  "version": "0.1.0",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "variableExplorer.show",
+        "title": "Show Variable Explorer",
+        "category": "Variable Explorer"
+      },
+      {
+        "command": "variableExplorer.refresh",
+        "title": "Refresh Variables",
+        "category": "Variable Explorer"
+      },
+      {
+        "command": "variableExplorer.runFile",
+        "title": "Run Current Python File",
+        "category": "Variable Explorer"
+      },
+      {
+        "command": "variableExplorer.runSelection",
+        "title": "Run Selection/Line",
+        "category": "Variable Explorer"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "variableExplorer.runFile",
+        "key": "f5",
+        "when": "editorTextFocus && editorLangId == python"
+      },
+      {
+        "command": "variableExplorer.runSelection",
+        "key": "f9",
+        "when": "editorTextFocus && editorLangId == python"
+      },
+      {
+        "command": "variableExplorer.runSelection",
+        "key": "shift+enter",
+        "when": "editorTextFocus && editorLangId == python"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "variableExplorer.runFile",
+          "when": "resourceLangId == python",
+          "group": "navigation"
+        },
+        {
+          "command": "variableExplorer.runSelection",
+          "when": "resourceLangId == python && editorHasSelection",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Variable Explorer",
+      "properties": {
+        "variableExplorer.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Path to Python interpreter"
+        }
+      }
+    }
+  }
+}
