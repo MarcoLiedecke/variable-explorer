@@ -1,1 +1,10 @@
 node_modules
+*.vsix
+*.pyc
+__pycache__/
+.DS_Store
+test.py
+test_*.py
+*_TEST.md
+*_IMPROVEMENTS.md
+*_REPORT.md
