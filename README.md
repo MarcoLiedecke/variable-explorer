@@ -225,14 +225,25 @@ MIT License - See LICENSE file for details
 
 ## Changelog
 
-### Version 0.1.7 (Latest)
-- **🔍 DataFrame Search/Filter**: Real-time search across all DataFrame columns with instant filtering as you type
-- **📄 CSV Export**: Export entire DataFrames or filtered results to CSV files with one click
-- **⚡ Performance Improvements**: Optimized JSON handling for DataFrames with 1000+ columns
-- **🎨 Visual Enhancements**: New color palette selector with visual swatches instead of text labels
-- **🔧 Fixed Modal Footer**: Pagination controls now stay visible in a fixed footer, not affected by horizontal scrolling
-- **✨ Improved UX**: All rows and columns are now loaded by default (no artificial limits)
-- **🐛 Bug Fixes**: Fixed buffer overflow issues with very wide DataFrames
+### Version 0.1.9 (Latest)
+- **Critical Backend Fix**: Fixed "Python backend not started" error when refreshing Variable Explorer
+- **Backend Persistence**: Python backend now persists when webview panel is closed
+- **Improved Error Handling**: Better error messages and status checks in refresh command
+- **Race Condition Prevention**: Enhanced synchronization when running code before backend fully starts
+- **Auto-Recovery**: Refresh now automatically attempts to restart backend if it's not running
+- **UI Fix**: Corrected search button placement in toolbar header
+
+### Version 0.1.8
+- **UI Fix**: Fixed search button placement in toolbar header
+
+### Version 0.1.7
+- **DataFrame Search/Filter**: Real-time search across all DataFrame columns with instant filtering as you type
+- **CSV Export**: Export entire DataFrames or filtered results to CSV files with one click
+- **Performance Improvements**: Optimized JSON handling for DataFrames with 1000+ columns
+- **Visual Enhancements**: New color palette selector with visual swatches instead of text labels
+- **Fixed Modal Footer**: Pagination controls now stay visible in a fixed footer, not affected by horizontal scrolling
+- **Improved UX**: All rows and columns are now loaded by default (no artificial limits)
+- **Bug Fixes**: Fixed buffer overflow issues with very wide DataFrames
 
 ### Version 0.1.6
 - **DataFrame Index Preservation**: Custom indices (named, numeric, datetime) are now correctly preserved and displayed
