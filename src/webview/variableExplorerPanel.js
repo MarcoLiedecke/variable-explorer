@@ -1,5 +1,6 @@
 // src/webview/variableExplorerPanel.js
 const vscode = require('vscode');
+const path = require('path');
 const { getWebviewContent } = require('./webviewContent');
 
 class VariableExplorerPanel {
@@ -13,6 +14,11 @@ class VariableExplorerPanel {
     }
 
     createPanel() {
+        // Get icon URI for the webview panel tab
+        const iconPath = vscode.Uri.file(
+            path.join(this.context.extensionPath, 'logo.png')
+        );
+
         this.panel = vscode.window.createWebviewPanel(
             'variableExplorer',
             'Variable Explorer',
@@ -23,6 +29,9 @@ class VariableExplorerPanel {
             }
         );
 
+        // Set the icon for the webview panel tab
+        this.panel.iconPath = iconPath;
+
         this.panel.webview.html = getWebviewContent(this.panel.webview, this.context.extensionPath);
 
         this.panel.webview.onDidReceiveMessage(
@@ -31,7 +40,7 @@ class VariableExplorerPanel {
 
         this.panel.onDidDispose(() => {
             this.panel = null;
-            this.pythonManager.dispose();
+            // Don't dispose the Python backend - keep it running for other operations
         });
     }
 
@@ -46,7 +55,17 @@ class VariableExplorerPanel {
     handleMessage(message) {
         switch (message.command) {
             case 'refresh':
-                this.pythonManager.getVariables();
+                if (!this.pythonManager.isRunning()) {
+                    // Try to restart the backend
+                    this.startPythonBackend();
+                    setTimeout(() => {
+                        if (this.pythonManager.isRunning()) {
+                            this.pythonManager.getVariables();
+                        }
+                    }, 500);
+                } else {
+                    this.pythonManager.getVariables();
+                }
                 break;
             case 'viewVariable':
                 this.pythonManager.getDetails(message.name, message.path);
@@ -58,6 +77,48 @@ class VariableExplorerPanel {
                 console.log('Clearing namespace');
                 this.pythonManager.clearNamespace();
                 break;
+            case 'getCaptureMainLocals':
+                // Send the current setting value to the webview
+                const currentValue = vscode.workspace.getConfiguration('variableExplorer').get('captureMainLocals', false);
+                this.panel.webview.postMessage({
+                    command: 'setCaptureMainLocals',
+                    value: currentValue
+                });
+                break;
+            case 'updateCaptureMainLocals':
+                // Update the VS Code setting
+                vscode.workspace.getConfiguration('variableExplorer').update('captureMainLocals', message.value, vscode.ConfigurationTarget.Global);
+                break;
+            case 'exportCSV':
+                this.handleExportCSV(message);
+                break;
+        }
+    }
+
+    async handleExportCSV(message) {
+        try {
+            const { fileName, csvData, rowCount, columnCount } = message;
+
+            // Show save dialog
+            const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(fileName),
+                filters: {
+                    'CSV Files': ['csv'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (uri) {
+                // Write the CSV data to the selected file
+                const buffer = Buffer.from(csvData, 'utf8');
+                await vscode.workspace.fs.writeFile(uri, buffer);
+
+                vscode.window.showInformationMessage(
+                    `Exported ${rowCount} rows × ${columnCount} columns to ${path.basename(uri.fsPath)}`
+                );
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to export CSV: ${error.message}`);
         }
     }
 

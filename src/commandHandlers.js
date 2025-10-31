@@ -13,6 +13,11 @@ function registerCommands(context, getPanel, pythonManager) {
     const refreshVars = vscode.commands.registerCommand('variableExplorer.refresh', () => {
         const panel = getPanel();
         if (panel) {
+            // Ensure backend is started before refreshing
+            if (!pythonManager.isRunning()) {
+                vscode.window.showWarningMessage('Python backend is not running. Please run some Python code first.');
+                return;
+            }
             pythonManager.getVariables();
         }
     });
@@ -21,14 +26,25 @@ function registerCommands(context, getPanel, pythonManager) {
         const editor = vscode.window.activeTextEditor;
         if (editor && editor.document.languageId === 'python') {
             const panel = getPanel();
-            if (!panel) {
-                vscode.commands.executeCommand('variableExplorer.show');
-                setTimeout(() => {
+            panel.reveal(); // Ensure panel is visible
+
+            // Wait for backend to be ready if panel was just created
+            const executeRun = () => {
+                if (pythonManager.isRunning()) {
                     pythonManager.runFile(editor.document.uri.fsPath);
-                }, 500);
-            } else {
-                pythonManager.runFile(editor.document.uri.fsPath);
-            }
+                } else {
+                    // Backend should be starting, wait a bit longer
+                    setTimeout(() => {
+                        if (pythonManager.isRunning()) {
+                            pythonManager.runFile(editor.document.uri.fsPath);
+                        } else {
+                            vscode.window.showErrorMessage('Failed to start Python backend. Please check your Python installation.');
+                        }
+                    }, 1000);
+                }
+            };
+
+            executeRun();
         } else {
             vscode.window.showErrorMessage('Please open a Python file first.');
         }
@@ -38,18 +54,33 @@ function registerCommands(context, getPanel, pythonManager) {
         const editor = vscode.window.activeTextEditor;
         if (editor && editor.document.languageId === 'python') {
             const panel = getPanel();
-            if (!panel) {
-                vscode.commands.executeCommand('variableExplorer.show');
-                setTimeout(() => {
+            panel.reveal(); // Ensure panel is visible
+
+            // Wait for backend to be ready if panel was just created
+            const executeRun = () => {
+                if (pythonManager.isRunning()) {
                     executeSelection(editor, pythonManager);
-                }, 1000);
-            } else {
-                executeSelection(editor, pythonManager);
-            }
+                } else {
+                    // Backend should be starting, wait a bit longer
+                    setTimeout(() => {
+                        if (pythonManager.isRunning()) {
+                            executeSelection(editor, pythonManager);
+                        } else {
+                            vscode.window.showErrorMessage('Failed to start Python backend. Please check your Python installation.');
+                        }
+                    }, 1000);
+                }
+            };
+
+            executeRun();
         }
     });
 
-    context.subscriptions.push(showExplorer, refreshVars, runFile, runSelection);
+    const support = vscode.commands.registerCommand('variableExplorer.support', () => {
+        vscode.env.openExternal(vscode.Uri.parse('https://buymeacoffee.com/marcoliedecke'));
+    });
+
+    context.subscriptions.push(showExplorer, refreshVars, runFile, runSelection, support);
 }
 
 function executeSelection(editor, pythonManager) {

@@ -2,9 +2,9 @@
   "name": "variable-explorer",
   "displayName": "Variable Explorer",
   "description": "A powerful variable inspection and editing tool for Python development, inspired by Spyder's Variable Explorer",
-  "version": "0.1.0",
+  "version": "0.1.9",
   "publisher": "VariableExplorer",
-  "icon": "icon.png",
+  "icon": "logo.png",
   "author": {
     "name": "Marco Liedecke"
   },
@@ -17,6 +17,9 @@
     "url": "https://github.com/MarcoLiedecke/variable-explorer/issues"
   },
   "homepage": "https://github.com/MarcoLiedecke/variable-explorer#readme",
+  "sponsor": {
+    "url": "https://buymeacoffee.com/marcoliedecke"
+  },
   "keywords": [
     "python",
     "variable explorer",
@@ -60,6 +63,11 @@
         "command": "variableExplorer.runSelection",
         "title": "Run Selection/Line",
         "category": "Variable Explorer"
+      },
+      {
+        "command": "variableExplorer.support",
+        "title": "Support Variable Explorer",
+        "category": "Variable Explorer"
       }
     ],
     "keybindings": [
@@ -100,6 +108,11 @@
           "type": "string",
           "default": "python",
           "description": "Path to Python interpreter"
+        },
+        "variableExplorer.captureMainLocals": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically expose local variables from main() function in the Variable Explorer"
         }
       }
     }

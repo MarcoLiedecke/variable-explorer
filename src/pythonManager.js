@@ -8,6 +8,7 @@ class PythonManager {
         this.context = context;
         this.process = null;
         this.messageCallback = null;
+        this.outputBuffer = ''; // Buffer for accumulating stdout data
     }
 
     start(onMessage) {
@@ -17,19 +18,35 @@ class PythonManager {
         }
 
         this.messageCallback = onMessage;
+        this.outputBuffer = ''; // Reset buffer
         const pythonPath = vscode.workspace.getConfiguration('python').get('defaultInterpreterPath') || 'python';
         const backendScript = path.join(this.context.extensionPath, 'python', 'variable_inspector.py');
 
         this.process = spawn(pythonPath, [backendScript]);
 
         this.process.stdout.on('data', (data) => {
-            try {
-                const response = JSON.parse(data.toString());
-                if (this.messageCallback) {
-                    this.messageCallback(response);
+            // Accumulate data in buffer
+            this.outputBuffer += data.toString();
+
+            // Process complete lines (ending with \n)
+            let lineEnd;
+            while ((lineEnd = this.outputBuffer.indexOf('\n')) !== -1) {
+                const line = this.outputBuffer.substring(0, lineEnd).trim();
+                this.outputBuffer = this.outputBuffer.substring(lineEnd + 1);
+
+                if (line.length > 0) {
+                    try {
+                        const response = JSON.parse(line);
+                        if (this.messageCallback) {
+                            this.messageCallback(response);
+                        }
+                    } catch (e) {
+                        console.error('Error parsing Python output:', e, {
+                            line: line.substring(0, 100) + '...',
+                            length: line.length
+                        });
+                    }
                 }
-            } catch (e) {
-                console.error('Error parsing Python output:', e);
             }
         });
 
@@ -40,12 +57,14 @@ class PythonManager {
         this.process.on('close', (code) => {
             console.log(`Python process exited with code ${code}`);
             this.process = null;
+            this.outputBuffer = ''; // Clear buffer on close
         });
     }
 
     sendCommand(command) {
         if (!this.process || !this.process.stdin) {
-            vscode.window.showErrorMessage('Python backend not started. Please show Variable Explorer first.');
+            console.error('Python backend not running, cannot send command:', command.command);
+            // Return false silently - caller should check isRunning() before calling
             return false;
         }
 
@@ -55,16 +74,27 @@ class PythonManager {
             return true;
         } catch (e) {
             console.error('Error sending command to Python:', e);
+            vscode.window.showErrorMessage('Failed to communicate with Python backend. Please try restarting Variable Explorer.');
             return false;
         }
     }
 
     runFile(filePath) {
-        return this.sendCommand({ command: 'run_file', file: filePath });
+        const captureMainLocals = vscode.workspace.getConfiguration('variableExplorer').get('captureMainLocals', false);
+        return this.sendCommand({
+            command: 'run_file',
+            file: filePath,
+            capture_main_locals: captureMainLocals
+        });
     }
 
     runCode(code) {
-        return this.sendCommand({ command: 'run_code', code: code });
+        const captureMainLocals = vscode.workspace.getConfiguration('variableExplorer').get('captureMainLocals', false);
+        return this.sendCommand({
+            command: 'run_code',
+            code: code,
+            capture_main_locals: captureMainLocals
+        });
     }
 
     getVariables() {

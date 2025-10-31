@@ -62,6 +62,36 @@
 .toolbar button:hover .tooltip {
     visibility: visible;
 }
+/* Empty state styles */
+.empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    color: #858585;
+}
+
+.empty-state-icon {
+    width: 100px;
+    height: 100px;
+    margin-bottom: 20px;
+}
+
+.empty-state-text {
+    font-size: 16px;
+    font-weight: 500;
+    color: #cccccc;
+    margin: 0 0 8px 0;
+}
+
+.empty-state-subtext {
+    font-size: 13px;
+    color: #858585;
+    margin: 0;
+}
+
 .table-container {
     flex: 1;
     overflow: auto;
@@ -117,25 +147,225 @@ tr:hover {
 .col-type { width: 20%; min-width: 80px; }
 .col-size { width: 15%; min-width: 60px; }
 .col-value { width: 45%; min-width: 100px; }
-/* Value type colors - comprehensive scheme */
-.value-numeric { background-color: #1a237e; }       /* int, float, complex - dark blue */
-.value-string { background-color: #4a148c; }        /* str - dark purple */
-.value-list { background-color: #1b5e20; }          /* list - dark green */
-.value-tuple { background-color: #0d47a1; }         /* tuple - medium blue */
-.value-array { background-color: #004d40; }         /* numpy array - dark teal */
-.value-dict { background-color: #e65100; }          /* dict - dark orange */
-.value-dataframe { background-color: #bf360c; }     /* DataFrame - deep orange */
-.value-series { background-color: #d84315; }        /* Series - orange-red */
-.value-set { background-color: #33691e; }           /* set - olive green */
-.value-bool { background-color: #1b5e20; }          /* bool - dark green */
-.value-function { background-color: #37474f; }      /* function - dark gray */
-.value-class { background-color: #455a64; }         /* class - medium gray */
-.value-none { background-color: #212121; }          /* NoneType - almost black */
-.value-other { background-color: #263238; }         /* other - dark blue-gray */
-.value-datetime { background-color: #6a1b9a; }      /* datetime types - deep purple */
-.value-range { background-color: #00695c; }         /* range, enumerate, zip - teal */
-.value-bytes { background-color: #424242; }         /* bytes, bytearray - dark gray */
-.value-custom { background-color: #4e342e; }        /* custom objects - brown */
+
+/* Color palette variables - Default Palette */
+:root {
+    /* Basic types */
+    --color-numeric: #1a237e;           /* int, float, complex - dark blue */
+    --color-string: #4a148c;            /* str - dark purple */
+    --color-bool: #1b5e20;              /* bool - dark green */
+    --color-none: #212121;              /* NoneType - almost black */
+
+    /* Collections */
+    --color-list: #1b5e20;              /* list - dark green */
+    --color-tuple: #0d47a1;             /* tuple - medium blue */
+    --color-set: #33691e;               /* set - olive green */
+    --color-frozenset: #2e7d32;         /* frozenset - lighter olive green */
+    --color-dict: #e65100;              /* dict - dark orange */
+    --color-ordereddict: #f57c00;       /* OrderedDict - orange */
+    --color-defaultdict: #ef6c00;       /* defaultdict - darker orange */
+    --color-counter: #fb8c00;           /* Counter - lighter orange */
+    --color-deque: #558b2f;             /* deque - green */
+
+    /* NumPy/Scientific */
+    --color-array: #004d40;             /* numpy array - dark teal */
+    --color-dataframe: #bf360c;         /* DataFrame - deep orange */
+    --color-series: #d84315;            /* Series - orange-red */
+
+    /* ML/AI Tensors */
+    --color-tensor: #1565c0;            /* PyTorch/TF Tensor - bright blue */
+    --color-jax: #0277bd;               /* JAX array - cyan blue */
+
+    /* Date/Time */
+    --color-datetime: #6a1b9a;          /* datetime types - deep purple */
+
+    /* Iterables/Generators */
+    --color-range: #00695c;             /* range, enumerate, zip - teal */
+    --color-generator: #00838f;         /* generator - cyan teal */
+
+    /* Binary/Bytes */
+    --color-bytes: #424242;             /* bytes, bytearray - dark gray */
+    --color-memoryview: #616161;        /* memoryview - medium gray */
+
+    /* Path/File */
+    --color-path: #795548;              /* Path, PurePath - brown */
+
+    /* Numeric precision */
+    --color-decimal: #283593;           /* Decimal - indigo */
+    --color-fraction: #303f9f;          /* Fraction - lighter indigo */
+
+    /* Special types */
+    --color-uuid: #7b1fa2;              /* UUID - purple */
+    --color-pattern: #512da8;           /* regex Pattern - deep purple */
+    --color-exception: #c62828;         /* Exception types - red */
+
+    /* Callables */
+    --color-function: #37474f;          /* function - dark gray */
+    --color-class: #455a64;             /* class - medium gray */
+    --color-module: #546e7a;            /* module - blue-gray */
+
+    /* Fallback */
+    --color-other: #263238;             /* other - dark blue-gray */
+    --color-custom: #4e342e;            /* custom objects - brown */
+}
+
+/* WARM Color Palette - Sunset/Fire Theme */
+body[data-palette="warm"] {
+    /* Basic types */
+    --color-numeric: #8b4513;           /* int, float, complex - saddle brown */
+    --color-string: #6b2d5c;            /* str - dark magenta */
+    --color-bool: #704214;              /* bool - burnt sienna */
+    --color-none: #3d2817;              /* NoneType - dark brown */
+
+    /* Collections */
+    --color-list: #a0522d;              /* list - sienna */
+    --color-tuple: #b8860b;             /* tuple - dark goldenrod */
+    --color-set: #8b6914;               /* set - dark yellow-brown */
+    --color-frozenset: #9a7b2e;         /* frozenset - olive gold */
+    --color-dict: #d2691e;              /* dict - chocolate */
+    --color-ordereddict: #ff6347;       /* OrderedDict - tomato */
+    --color-defaultdict: #ff4500;       /* defaultdict - orange red */
+    --color-counter: #ff7f50;           /* Counter - coral */
+    --color-deque: #bc8f3d;             /* deque - golden brown */
+
+    /* NumPy/Scientific */
+    --color-array: #8b4726;             /* numpy array - burnt umber */
+    --color-dataframe: #cd5c5c;         /* DataFrame - indian red */
+    --color-series: #e9967a;            /* Series - dark salmon */
+
+    /* ML/AI Tensors */
+    --color-tensor: #b8860b;            /* PyTorch/TF Tensor - dark goldenrod */
+    --color-jax: #daa520;               /* JAX array - goldenrod */
+
+    /* Date/Time */
+    --color-datetime: #8b4789;          /* datetime types - orchid purple */
+
+    /* Iterables/Generators */
+    --color-range: #8b7355;             /* range, enumerate, zip - burlywood */
+    --color-generator: #cd853f;         /* generator - peru */
+
+    /* Binary/Bytes */
+    --color-bytes: #5c4033;             /* bytes, bytearray - dark brown */
+    --color-memoryview: #704d3c;        /* memoryview - coffee brown */
+
+    /* Path/File */
+    --color-path: #a0522d;              /* Path, PurePath - sienna */
+
+    /* Numeric precision */
+    --color-decimal: #9b5d4f;           /* Decimal - warm brown */
+    --color-fraction: #b8735e;          /* Fraction - terracotta */
+
+    /* Special types */
+    --color-uuid: #9b5d8f;              /* UUID - mauve */
+    --color-pattern: #8b5a7d;           /* regex Pattern - dusty purple */
+    --color-exception: #dc143c;         /* Exception types - crimson */
+
+    /* Callables */
+    --color-function: #6b5344;          /* function - warm gray */
+    --color-class: #7a6250;             /* class - warm medium gray */
+    --color-module: #8b7665;            /* module - warm blue-gray */
+
+    /* Fallback */
+    --color-other: #5c4d42;             /* other - warm dark gray */
+    --color-custom: #8b5a3c;            /* custom objects - brown */
+}
+
+/* COLD Color Palette - Ice/Ocean Theme */
+body[data-palette="cold"] {
+    /* Basic types */
+    --color-numeric: #0a1929;           /* int, float, complex - midnight blue */
+    --color-string: #1a237e;            /* str - navy blue */
+    --color-bool: #004d40;              /* bool - dark teal */
+    --color-none: #0d1117;              /* NoneType - near black blue */
+
+    /* Collections */
+    --color-list: #006064;              /* list - dark cyan */
+    --color-tuple: #01579b;             /* tuple - deep blue */
+    --color-set: #004d40;               /* set - dark teal */
+    --color-frozenset: #00695c;         /* frozenset - teal green */
+    --color-dict: #0277bd;              /* dict - light blue */
+    --color-ordereddict: #0288d1;       /* OrderedDict - lighter blue */
+    --color-defaultdict: #039be5;       /* defaultdict - sky blue */
+    --color-counter: #03a9f4;           /* Counter - light cyan blue */
+    --color-deque: #00796b;             /* deque - teal */
+
+    /* NumPy/Scientific */
+    --color-array: #004d4d;             /* numpy array - deep teal */
+    --color-dataframe: #005662;         /* DataFrame - dark cyan blue */
+    --color-series: #006978;            /* Series - cyan */
+
+    /* ML/AI Tensors */
+    --color-tensor: #1565c0;            /* PyTorch/TF Tensor - bright blue */
+    --color-jax: #0091ea;               /* JAX array - light blue */
+
+    /* Date/Time */
+    --color-datetime: #4a148c;          /* datetime types - deep indigo */
+
+    /* Iterables/Generators */
+    --color-range: #00838f;             /* range, enumerate, zip - dark cyan */
+    --color-generator: #0097a7;         /* generator - cyan */
+
+    /* Binary/Bytes */
+    --color-bytes: #263238;             /* bytes, bytearray - blue gray */
+    --color-memoryview: #37474f;        /* memoryview - darker blue gray */
+
+    /* Path/File */
+    --color-path: #455a64;              /* Path, PurePath - blue gray */
+
+    /* Numeric precision */
+    --color-decimal: #1a237e;           /* Decimal - indigo */
+    --color-fraction: #283593;          /* Fraction - deeper indigo */
+
+    /* Special types */
+    --color-uuid: #4a148c;              /* UUID - deep purple */
+    --color-pattern: #311b92;           /* regex Pattern - deep violet */
+    --color-exception: #1565c0;         /* Exception types - cold blue */
+
+    /* Callables */
+    --color-function: #263238;          /* function - dark blue gray */
+    --color-class: #37474f;             /* class - blue gray */
+    --color-module: #455a64;            /* module - lighter blue gray */
+
+    /* Fallback */
+    --color-other: #1c2833;             /* other - dark blue gray */
+    --color-custom: #34495e;            /* custom objects - slate blue */
+}
+
+/* Value type color classes */
+.value-numeric { background-color: var(--color-numeric); }
+.value-string { background-color: var(--color-string); }
+.value-bool { background-color: var(--color-bool); }
+.value-none { background-color: var(--color-none); }
+.value-list { background-color: var(--color-list); }
+.value-tuple { background-color: var(--color-tuple); }
+.value-set { background-color: var(--color-set); }
+.value-frozenset { background-color: var(--color-frozenset); }
+.value-dict { background-color: var(--color-dict); }
+.value-ordereddict { background-color: var(--color-ordereddict); }
+.value-defaultdict { background-color: var(--color-defaultdict); }
+.value-counter { background-color: var(--color-counter); }
+.value-deque { background-color: var(--color-deque); }
+.value-array { background-color: var(--color-array); }
+.value-dataframe { background-color: var(--color-dataframe); }
+.value-series { background-color: var(--color-series); }
+.value-tensor { background-color: var(--color-tensor); }
+.value-jax { background-color: var(--color-jax); }
+.value-datetime { background-color: var(--color-datetime); }
+.value-range { background-color: var(--color-range); }
+.value-generator { background-color: var(--color-generator); }
+.value-bytes { background-color: var(--color-bytes); }
+.value-memoryview { background-color: var(--color-memoryview); }
+.value-path { background-color: var(--color-path); }
+.value-decimal { background-color: var(--color-decimal); }
+.value-fraction { background-color: var(--color-fraction); }
+.value-uuid { background-color: var(--color-uuid); }
+.value-pattern { background-color: var(--color-pattern); }
+.value-exception { background-color: var(--color-exception); }
+.value-function { background-color: var(--color-function); }
+.value-class { background-color: var(--color-class); }
+.value-module { background-color: var(--color-module); }
+.value-other { background-color: var(--color-other); }
+.value-custom { background-color: var(--color-custom); }
 
 /* Modal styles remain the same */
 .modal {
@@ -168,12 +398,60 @@ tr:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
 }
 
 .modal-title {
     font-size: 16px;
     font-weight: 600;
     color: #cccccc;
+    flex-shrink: 0;
+}
+
+.modal-header .search-container {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    max-width: 300px;
+}
+
+.search-input {
+    flex: 1;
+    padding: 4px 8px;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 3px;
+    font-size: 13px;
+    outline: none;
+    min-width: 150px;
+}
+
+.search-input:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+.search-input::placeholder {
+    color: var(--vscode-input-placeholderForeground);
+    opacity: 0.6;
+}
+
+.clear-search-btn {
+    background: transparent;
+    border: none;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.clear-search-btn:hover {
+    opacity: 1;
 }
 
 .modal-close {
@@ -273,11 +551,13 @@ tr:hover {
 
 .modal-footer {
     display: flex;
-    justify-content: flex-end;
+    justify-content: center;
+    align-items: center;
     gap: 8px;
     padding: 12px 16px;
     border-top: 1px solid #3e3e42;
     background-color: #2d2d30;
+    flex-shrink: 0;
 }
 
 .btn {
@@ -306,4 +586,377 @@ tr:hover {
 
 .btn-secondary:hover {
     background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* Array visualization styles */
+.array-controls {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    background-color: var(--vscode-editor-background);
+    border-bottom: 1px solid #3e3e42;
+}
+
+.array-btn {
+    padding: 6px 14px;
+    border-radius: 2px;
+    border: 1px solid var(--vscode-button-border);
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.array-btn:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.array-grid-container {
+    padding: 12px;
+    background-color: var(--vscode-editor-background);
+}
+
+.array-grid {
+    overflow: auto;
+    max-height: 600px;
+    border: 1px solid #3e3e42;
+}
+
+.array-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+}
+
+.array-table th,
+.array-table td {
+    border: 1px solid #3e3e42;
+    text-align: center;
+    padding: 4px 8px;
+    position: relative;
+}
+
+.array-col-header,
+.array-row-header {
+    background-color: #2d2d30;
+    color: #cccccc;
+    font-weight: 600;
+    position: sticky;
+    user-select: none;
+}
+
+.array-col-header {
+    top: 0;
+    z-index: 20;
+}
+
+.array-row-header {
+    left: 0;
+    z-index: 10;
+}
+
+.array-corner {
+    position: sticky;
+    left: 0;
+    top: 0;
+    z-index: 30;
+    background-color: #2d2d30;
+}
+
+.array-cell {
+    color: #1a1a1a;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.array-resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 5px;
+    height: 100%;
+    cursor: col-resize;
+    user-select: none;
+    z-index: 100;
+}
+
+.array-resizer:hover {
+    background-color: var(--vscode-button-background);
+}
+
+.array-row-resizer {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    cursor: row-resize;
+    user-select: none;
+    z-index: 100;
+}
+
+.array-row-resizer:hover {
+    background-color: var(--vscode-button-background);
+}
+
+/* Toolbar spacer to push options button to the right */
+.toolbar-spacer {
+    flex: 1;
+}
+
+/* Search container and input */
+.toolbar .search-container {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+}
+
+#searchInput {
+    background-color: #3c3c3c;
+    color: #cccccc;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    width: 200px;
+    outline: none;
+    transition: width 0.3s ease, opacity 0.3s ease;
+}
+
+#searchInput:focus {
+    border-color: #0e639c;
+    background-color: #2d2d30;
+}
+
+#searchInput::placeholder {
+    color: #888888;
+}
+
+/* Options container and menu */
+.options-container {
+    position: relative;
+}
+
+.options-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    background-color: #2d2d30;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    min-width: 320px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+}
+
+.options-menu.show {
+    display: block;
+}
+
+.options-section {
+    padding: 8px 0;
+}
+
+.options-section-title {
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #999;
+    text-transform: uppercase;
+}
+
+.option-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.option-item:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.option-item input[type="checkbox"],
+.option-item input[type="radio"] {
+    margin: 0;
+    margin-right: 8px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border: 1px solid #cccccc;
+    background-color: transparent;
+    position: relative;
+    flex-shrink: 0;
+    padding: 2px;
+}
+
+.option-item input[type="checkbox"] {
+    border-radius: 2px;
+}
+
+.option-item input[type="radio"] {
+    border-radius: 50%;
+}
+
+.option-item input[type="checkbox"]:checked {
+    background-color: transparent;
+    border-color: #cccccc;
+    background-clip: content-box;
+    background-color: #ffffff;
+}
+
+.option-item input[type="radio"]:checked {
+    background-color: transparent;
+    border-color: #cccccc;
+    background-clip: content-box;
+    background-color: #ffffff;
+}
+
+.option-item input[type="checkbox"]:hover,
+.option-item input[type="radio"]:hover {
+    border-color: #ffffff;
+}
+
+.option-item span {
+    font-size: 13px;
+    color: #cccccc;
+}
+
+.options-divider {
+    height: 1px;
+    background-color: #3e3e42;
+    margin: 4px 0;
+}
+
+.option-action-btn {
+    display: block;
+    width: auto;
+    margin: 4px 12px;
+    padding: 6px 12px;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-foreground);
+    border: 1px solid var(--vscode-button-border);
+    border-radius: 2px;
+    cursor: pointer;
+    font-size: 13px;
+    text-align: left;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.option-action-btn:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* Pagination controls styling */
+.pagination-btn {
+    background-color: transparent;
+    border: none;
+    color: var(--vscode-foreground);
+    padding: 4px 6px;
+    cursor: pointer;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.1s ease;
+    opacity: 0.8;
+}
+
+.pagination-btn:hover:not(:disabled) {
+    background-color: var(--vscode-toolbar-hoverBackground);
+    opacity: 1;
+}
+
+.pagination-btn:active:not(:disabled) {
+    background-color: var(--vscode-list-activeSelectionBackground);
+    opacity: 1;
+}
+
+.pagination-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.pagination-btn svg {
+    display: block;
+}
+
+.pagination-select {
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+    min-width: 50px;
+    transition: border-color 0.1s ease;
+}
+
+.pagination-select:hover {
+    border-color: var(--vscode-inputOption-activeBorder);
+}
+
+.pagination-select:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+/* Color palette selector styles */
+.palette-selector-row {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    justify-content: space-between;
+}
+
+.palette-button {
+    flex: 1;
+    display: flex;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    overflow: hidden;
+    height: 32px;
+    transition: all 0.2s ease;
+}
+
+.palette-button:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.palette-button.active {
+    border-color: #0e639c;
+    box-shadow: 0 0 0 1px #0e639c;
+}
+
+.palette-swatch {
+    flex: 1;
+    height: 100%;
+    min-width: 0;
+}
+
+.palette-swatch:first-child {
+    border-top-left-radius: 2px;
+    border-bottom-left-radius: 2px;
+}
+
+.palette-swatch:last-child {
+    border-top-right-radius: 2px;
+    border-bottom-right-radius: 2px;
 }

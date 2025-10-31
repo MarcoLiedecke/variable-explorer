@@ -15,68 +15,127 @@ from inspector import get_all_variables, get_variable_details
 exec_namespace = {}
 
 
-def run_python_file(file_path):
-    """Execute a Python file and capture variables"""
+def _inject_main_locals_capture(code):
+    """
+    Injects code to expose main() local variables after it's called.
+    Uses AST transformation to add globals().update(locals()) at the end of main().
+    """
+    import ast
+    import sys
+
+    try:
+        tree = ast.parse(code)
+
+        # Find and modify main() function
+        main_found = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'main':
+                main_found = True
+                # Add code to expose locals at the end of main()
+                expose_stmt = ast.parse(
+                    "globals().update({k: v for k, v in locals().items() if not k.startswith('_')})"
+                ).body[0]
+                node.body.append(expose_stmt)
+
+        if not main_found:
+            return code
+
+        # Convert back to code using ast.unparse (Python 3.9+)
+        if sys.version_info >= (3, 9):
+            return ast.unparse(tree)
+        else:
+            # For older Python, just return original code
+            return code
+
+    except (SyntaxError, Exception):
+        # If AST modification fails, return original code
+        return code
+
+
+def run_python_file(file_path, capture_main_locals=False):
+    """Execute a Python file and capture variables
+
+    Args:
+        file_path: Path to the Python file to execute
+        capture_main_locals: If True, expose local variables from main() function
+    """
     global exec_namespace
-    
+
     try:
         with open(file_path, 'r') as f:
             code = f.read()
-        
+
+        # Inject code to capture main() locals if enabled
+        if capture_main_locals:
+            code = _inject_main_locals_capture(code)
+
+        # Set __name__ to '__main__' so if __name__ == '__main__' blocks execute
+        exec_namespace['__name__'] = '__main__'
+        exec_namespace['__file__'] = file_path
+
         # Capture stdout/stderr
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
-        
+
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             exec(code, exec_namespace)
-        
+
         # Get variables after execution
         variables = get_all_variables(exec_namespace)
-        
+
         response = {
             'status': 'success',
             'variables': variables,
             'stdout': stdout_capture.getvalue(),
             'stderr': stderr_capture.getvalue()
         }
-        
+
     except Exception as e:
         response = {
             'status': 'error',
             'error': str(e),
             'variables': []
         }
-    
+
     return response
 
 
-def run_python_code(code):
-    """Execute Python code string and capture variables"""
+def run_python_code(code, capture_main_locals=False):
+    """Execute Python code string and capture variables
+
+    Args:
+        code: Python code string to execute
+        capture_main_locals: If True, expose local variables from main() function
+    """
     global exec_namespace
-    
+
     try:
+        # Inject code to capture main() locals if enabled
+        if capture_main_locals:
+            code = _inject_main_locals_capture(code)
+
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
-        
+
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             exec(code, exec_namespace)
-        
+
         variables = get_all_variables(exec_namespace)
-        
+
         response = {
             'status': 'success',
             'variables': variables,
             'stdout': stdout_capture.getvalue(),
             'stderr': stderr_capture.getvalue()
         }
-        
+
     except Exception as e:
         response = {
             'status': 'error',
             'error': str(e),
             'variables': get_all_variables(exec_namespace)
         }
-    
+
     return response
 
 def update_variable(var_name, var_type, new_value):
@@ -152,11 +211,13 @@ def main():
             command = json.loads(line.strip())
             
             if command['command'] == 'run_file':
-                response = run_python_file(command['file'])
+                capture_main = command.get('capture_main_locals', False)
+                response = run_python_file(command['file'], capture_main)
                 print(json.dumps(response), flush=True)
-                
+
             elif command['command'] == 'run_code':
-                response = run_python_code(command['code'])
+                capture_main = command.get('capture_main_locals', False)
+                response = run_python_code(command['code'], capture_main)
                 print(json.dumps(response), flush=True)
                 
             elif command['command'] == 'get_variables':
