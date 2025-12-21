@@ -16,7 +16,10 @@ function activate(context) {
     // Function to get or create panel
     const getPanel = () => {
         if (!variableExplorerPanel) {
-            variableExplorerPanel = new VariableExplorerPanel(context, pythonManager);
+            variableExplorerPanel = new VariableExplorerPanel(context, pythonManager, () => {
+                // Reset the panel reference when it's disposed
+                variableExplorerPanel = null;
+            });
         }
         return variableExplorerPanel;
     };

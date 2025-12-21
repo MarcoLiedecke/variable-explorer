@@ -225,7 +225,14 @@ MIT License - See LICENSE file for details
 
 ## Changelog
 
-### Version 0.1.9 (Latest)
+### Version 0.2.0 (Latest)
+- **Working Directory Fix**: Python backend now runs in workspace folder, fixing relative file path errors (e.g., `pd.read_csv('file.csv')`)
+- **Panel Lifecycle Fix**: Fixed issue where variables wouldn't display after closing and reopening Variable Explorer
+- **Callback Management**: Improved message callback handling when panel is recreated
+- **Auto-Population**: Reopened panels now automatically request and display current variables
+- **Enhanced Stability**: Better synchronization between panel lifecycle and Python backend state
+
+### Version 0.1.9
 - **Critical Backend Fix**: Fixed "Python backend not started" error when refreshing Variable Explorer
 - **Backend Persistence**: Python backend now persists when webview panel is closed
 - **Improved Error Handling**: Better error messages and status checks in refresh command

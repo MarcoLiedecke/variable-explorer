@@ -2,7 +2,7 @@
   "name": "variable-explorer",
   "displayName": "Variable Explorer",
   "description": "A powerful variable inspection and editing tool for Python development, inspired by Spyder's Variable Explorer",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "publisher": "VariableExplorer",
   "icon": "logo.png",
   "author": {

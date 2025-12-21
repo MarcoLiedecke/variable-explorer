@@ -12,17 +12,23 @@ class PythonManager {
     }
 
     start(onMessage) {
+        // Always update the message callback, even if process is already running
+        // This allows the new panel to receive messages after the old panel is disposed
+        this.messageCallback = onMessage;
+
         if (this.process) {
             console.log('Python process already running');
             return;
         }
-
-        this.messageCallback = onMessage;
         this.outputBuffer = ''; // Reset buffer
         const pythonPath = vscode.workspace.getConfiguration('python').get('defaultInterpreterPath') || 'python';
         const backendScript = path.join(this.context.extensionPath, 'python', 'variable_inspector.py');
 
-        this.process = spawn(pythonPath, [backendScript]);
+        // Get the workspace folder as the working directory
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const spawnOptions = workspaceFolder ? { cwd: workspaceFolder } : {};
+
+        this.process = spawn(pythonPath, [backendScript], spawnOptions);
 
         this.process.stdout.on('data', (data) => {
             // Accumulate data in buffer

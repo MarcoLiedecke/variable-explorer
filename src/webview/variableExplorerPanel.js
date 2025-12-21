@@ -4,10 +4,11 @@ const path = require('path');
 const { getWebviewContent } = require('./webviewContent');
 
 class VariableExplorerPanel {
-    constructor(context, pythonManager) {
+    constructor(context, pythonManager, onDispose) {
         this.context = context;
         this.pythonManager = pythonManager;
         this.panel = null;
+        this.onDisposeCallback = onDispose;
 
         this.createPanel();
         this.startPythonBackend();
@@ -41,6 +42,10 @@ class VariableExplorerPanel {
         this.panel.onDidDispose(() => {
             this.panel = null;
             // Don't dispose the Python backend - keep it running for other operations
+            // Notify extension.js that the panel was disposed
+            if (this.onDisposeCallback) {
+                this.onDisposeCallback();
+            }
         });
     }
 
@@ -49,6 +54,13 @@ class VariableExplorerPanel {
             this.pythonManager.start((response) => {
                 this.handlePythonResponse(response);
             });
+        } else {
+            // Backend is already running, just update the callback and request current variables
+            this.pythonManager.start((response) => {
+                this.handlePythonResponse(response);
+            });
+            // Request current variables to populate the reopened panel
+            this.pythonManager.getVariables();
         }
     }
 

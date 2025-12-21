@@ -2,6 +2,7 @@ node_modules
 *.vsix
 *.pyc
 __pycache__/
+.claude
 .DS_Store
 test.py
 test_*.py
