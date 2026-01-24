@@ -21,14 +21,47 @@ class PythonManager {
             return;
         }
         this.outputBuffer = ''; // Reset buffer
-        const pythonPath = vscode.workspace.getConfiguration('python').get('defaultInterpreterPath') || 'python';
+
+        // Get Python path with better fallback logic for macOS
+        let pythonPath = vscode.workspace.getConfiguration('python').get('defaultInterpreterPath');
+        if (!pythonPath) {
+            // Try variableExplorer.pythonPath setting
+            pythonPath = vscode.workspace.getConfiguration('variableExplorer').get('pythonPath');
+        }
+        if (!pythonPath) {
+            // Use python3 on macOS/Linux, python on Windows
+            pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+        }
+
         const backendScript = path.join(this.context.extensionPath, 'python', 'variable_inspector.py');
 
         // Get the workspace folder as the working directory
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         const spawnOptions = workspaceFolder ? { cwd: workspaceFolder } : {};
 
-        this.process = spawn(pythonPath, [backendScript], spawnOptions);
+        console.log(`Starting Python backend with: ${pythonPath} ${backendScript}`);
+
+        try {
+            this.process = spawn(pythonPath, [backendScript], spawnOptions);
+        } catch (e) {
+            console.error('Failed to spawn Python process:', e);
+            vscode.window.showErrorMessage(
+                `Variable Explorer: Failed to start Python backend. ` +
+                `Make sure Python is installed and accessible as "${pythonPath}". ` +
+                `You can configure the Python path in settings.`
+            );
+            return;
+        }
+
+        // Handle spawn errors (e.g., command not found)
+        this.process.on('error', (err) => {
+            console.error('Python process error:', err);
+            this.process = null;
+            vscode.window.showErrorMessage(
+                `Variable Explorer: Failed to start Python. Error: ${err.message}. ` +
+                `Please check that Python is installed and the path is correct in settings.`
+            );
+        });
 
         this.process.stdout.on('data', (data) => {
             // Accumulate data in buffer
@@ -57,11 +90,25 @@ class PythonManager {
         });
 
         this.process.stderr.on('data', (data) => {
-            console.error(`Python Error: ${data}`);
+            const errorMsg = data.toString();
+            console.error(`Python Error: ${errorMsg}`);
+            // Show critical errors to user (but not regular warnings)
+            if (errorMsg.includes('ModuleNotFoundError') ||
+                errorMsg.includes('ImportError') ||
+                errorMsg.includes('SyntaxError') ||
+                errorMsg.includes('No module named')) {
+                vscode.window.showErrorMessage(`Variable Explorer Python Error: ${errorMsg.substring(0, 200)}`);
+            }
         });
 
         this.process.on('close', (code) => {
             console.log(`Python process exited with code ${code}`);
+            if (code !== 0 && code !== null) {
+                vscode.window.showWarningMessage(
+                    `Variable Explorer: Python backend exited unexpectedly (code ${code}). ` +
+                    `Try running a Python file again to restart it.`
+                );
+            }
             this.process = null;
             this.outputBuffer = ''; // Clear buffer on close
         });
@@ -126,6 +173,20 @@ class PythonManager {
 
     clearNamespace() {
         return this.sendCommand({ command: 'clear_namespace' });
+    }
+
+    saveSession(filePath) {
+        return this.sendCommand({
+            command: 'save_session',
+            file: filePath
+        });
+    }
+
+    loadSession(filePath) {
+        return this.sendCommand({
+            command: 'load_session',
+            file: filePath
+        });
     }
 
     isRunning() {

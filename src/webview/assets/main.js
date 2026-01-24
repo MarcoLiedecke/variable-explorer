@@ -1547,7 +1547,11 @@ function clearVars() {
 }
 
 function saveVars() {
-    // TODO: Implement save functionality
+    vscode.postMessage({ command: 'saveSession' });
+}
+
+function loadVars() {
+    vscode.postMessage({ command: 'loadSession' });
 }
 
 // Options menu functions

@@ -80,7 +80,51 @@ function registerCommands(context, getPanel, pythonManager) {
         vscode.env.openExternal(vscode.Uri.parse('https://buymeacoffee.com/marcoliedecke'));
     });
 
-    context.subscriptions.push(showExplorer, refreshVars, runFile, runSelection, support);
+    // New command: Run file in both terminal AND Variable Explorer
+    const runFileInTerminal = vscode.commands.registerCommand('variableExplorer.runFileInTerminal', async (resource) => {
+        // Get the file to run
+        let filePath;
+        if (resource && resource.fsPath) {
+            filePath = resource.fsPath;
+        } else {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && editor.document.languageId === 'python') {
+                filePath = editor.document.uri.fsPath;
+            }
+        }
+
+        if (!filePath) {
+            vscode.window.showErrorMessage('Please open a Python file first.');
+            return;
+        }
+
+        // Run in Variable Explorer
+        const panel = getPanel();
+        panel.reveal();
+
+        const executeInExplorer = () => {
+            if (pythonManager.isRunning()) {
+                pythonManager.runFile(filePath);
+            } else {
+                setTimeout(() => {
+                    if (pythonManager.isRunning()) {
+                        pythonManager.runFile(filePath);
+                    }
+                }, 1000);
+            }
+        };
+        executeInExplorer();
+
+        // Also run in terminal using Python extension
+        try {
+            await vscode.commands.executeCommand('python.execInTerminal', vscode.Uri.file(filePath));
+        } catch (e) {
+            // Python extension might not be installed, that's OK
+            console.log('Could not execute python.execInTerminal:', e.message);
+        }
+    });
+
+    context.subscriptions.push(showExplorer, refreshVars, runFile, runSelection, support, runFileInTerminal);
 }
 
 function executeSelection(editor, pythonManager) {

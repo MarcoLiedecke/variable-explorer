@@ -3,9 +3,11 @@ const vscode = require('vscode');
 const { registerCommands } = require('./commandHandlers');
 const { PythonManager } = require('./pythonManager');
 const { VariableExplorerPanel } = require('./webview/variableExplorerPanel');
+const { TerminalMonitor } = require('./terminalMonitor');
 
 let pythonManager;
 let variableExplorerPanel;
+let terminalMonitor;
 
 function activate(context) {
     console.log('Variable Explorer extension is now active');
@@ -27,9 +29,16 @@ function activate(context) {
     // Register all commands
     registerCommands(context, getPanel, pythonManager);
 
+    // Start terminal monitor to detect "Run Python File" button usage
+    terminalMonitor = new TerminalMonitor(getPanel, pythonManager);
+    terminalMonitor.start();
+
     // Clean up on deactivation
     context.subscriptions.push({
         dispose: () => {
+            if (terminalMonitor) {
+                terminalMonitor.dispose();
+            }
             if (variableExplorerPanel) {
                 variableExplorerPanel.dispose();
             }

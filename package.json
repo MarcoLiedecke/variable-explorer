@@ -2,7 +2,7 @@
   "name": "variable-explorer",
   "displayName": "Variable Explorer",
   "description": "A powerful variable inspection and editing tool for Python development, inspired by Spyder's Variable Explorer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "VariableExplorer",
   "icon": "logo.png",
   "author": {
@@ -57,7 +57,14 @@
       {
         "command": "variableExplorer.runFile",
         "title": "Run Current Python File",
-        "category": "Variable Explorer"
+        "category": "Variable Explorer",
+        "icon": "$(play)"
+      },
+      {
+        "command": "variableExplorer.runFileInTerminal",
+        "title": "Run Python File (Terminal + Variable Explorer)",
+        "category": "Variable Explorer",
+        "icon": "$(run-all)"
       },
       {
         "command": "variableExplorer.runSelection",
@@ -88,9 +95,21 @@
       }
     ],
     "menus": {
+      "editor/title/run": [
+        {
+          "command": "variableExplorer.runFileInTerminal",
+          "when": "resourceLangId == python",
+          "group": "navigation@1"
+        }
+      ],
       "editor/context": [
         {
           "command": "variableExplorer.runFile",
+          "when": "resourceLangId == python",
+          "group": "navigation"
+        },
+        {
+          "command": "variableExplorer.runFileInTerminal",
           "when": "resourceLangId == python",
           "group": "navigation"
         },
@@ -106,13 +125,18 @@
       "properties": {
         "variableExplorer.pythonPath": {
           "type": "string",
-          "default": "python",
-          "description": "Path to Python interpreter"
+          "default": "",
+          "description": "Path to Python interpreter. Leave empty to auto-detect (uses python3 on macOS/Linux, python on Windows). Falls back to the Python extension's interpreter if available."
         },
         "variableExplorer.captureMainLocals": {
           "type": "boolean",
           "default": false,
           "description": "Automatically expose local variables from main() function in the Variable Explorer"
+        },
+        "variableExplorer.monitorTerminalExecution": {
+          "type": "boolean",
+          "default": true,
+          "description": "Monitor terminal execution to capture variables when using the 'Run Python File' button or running Python in terminal"
         }
       }
     }

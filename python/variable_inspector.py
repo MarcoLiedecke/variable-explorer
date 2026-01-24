@@ -197,6 +197,114 @@ def clear_namespace():
     return {'status': 'success', 'message': 'Namespace cleared', 'variables': []}
 
 
+def save_session(file_path):
+    """Save the current session variables to a pickle file"""
+    global exec_namespace
+    import pickle
+
+    # Try to use dill if available (handles more types)
+    try:
+        import dill
+        serializer = dill
+        serializer_name = 'dill'
+    except ImportError:
+        serializer = pickle
+        serializer_name = 'pickle'
+
+    # Filter out non-picklable and internal variables
+    saved_vars = {}
+    skipped_vars = []
+
+    for name, value in exec_namespace.items():
+        # Skip internal variables
+        if name.startswith('_'):
+            continue
+
+        # Skip modules, functions, and classes (usually not what users want to save)
+        if isinstance(value, type) or callable(value):
+            # But allow lambda and simple functions if using dill
+            if serializer_name != 'dill' or isinstance(value, type):
+                skipped_vars.append({'name': name, 'reason': 'callable/type'})
+                continue
+
+        # Try to pickle the variable
+        try:
+            serializer.dumps(value)
+            saved_vars[name] = value
+        except Exception as e:
+            skipped_vars.append({'name': name, 'reason': str(e)[:50]})
+
+    if not saved_vars:
+        return {
+            'status': 'error',
+            'error': 'No variables could be saved. All variables are either internal or not serializable.'
+        }
+
+    try:
+        with open(file_path, 'wb') as f:
+            serializer.dump(saved_vars, f)
+
+        return {
+            'status': 'success',
+            'saved_count': len(saved_vars),
+            'saved_vars': list(saved_vars.keys()),
+            'skipped_vars': skipped_vars,
+            'serializer': serializer_name
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'error': f'Failed to save session: {str(e)}'
+        }
+
+
+def load_session(file_path):
+    """Load session variables from a pickle file"""
+    global exec_namespace
+    import pickle
+
+    # Try to use dill if available
+    try:
+        import dill
+        serializer = dill
+        serializer_name = 'dill'
+    except ImportError:
+        serializer = pickle
+        serializer_name = 'pickle'
+
+    try:
+        with open(file_path, 'rb') as f:
+            loaded_vars = serializer.load(f)
+
+        if not isinstance(loaded_vars, dict):
+            return {
+                'status': 'error',
+                'error': 'Invalid session file format. Expected a dictionary of variables.'
+            }
+
+        # Add loaded variables to namespace
+        loaded_count = 0
+        for name, value in loaded_vars.items():
+            exec_namespace[name] = value
+            loaded_count += 1
+
+        # Get updated variables list
+        variables = get_all_variables(exec_namespace)
+
+        return {
+            'status': 'success',
+            'loaded_count': loaded_count,
+            'loaded_vars': list(loaded_vars.keys()),
+            'variables': variables,
+            'serializer': serializer_name
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'error': f'Failed to load session: {str(e)}'
+        }
+
+
 def main():
     """Main loop to process commands from VS Code"""
     sys.stderr.write("Variable Inspector Backend Started\n")
@@ -237,7 +345,15 @@ def main():
             elif command['command'] == 'clear_namespace':
                 response = clear_namespace()
                 print(json.dumps(response), flush=True)
-                
+
+            elif command['command'] == 'save_session':
+                response = save_session(command['file'])
+                print(json.dumps(response), flush=True)
+
+            elif command['command'] == 'load_session':
+                response = load_session(command['file'])
+                print(json.dumps(response), flush=True)
+
         except Exception as e:
             error_response = {
                 'status': 'error',

@@ -8,3 +8,8 @@ node_modules/**
 *.vsix
 .DS_Store
 icon_backup.png
+.venv/**
+.claude/**
+test*.py
+*.pkl
+**/pytest.py

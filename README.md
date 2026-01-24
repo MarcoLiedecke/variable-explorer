@@ -117,8 +117,14 @@ The Variable Explorer works with Python code executed through:
 - Click the trash icon in the toolbar to clear the namespace
 - This removes all user-defined variables (built-ins are preserved)
 
-**Refresh:**
-- Click the refresh icon to update the variable list
+**Save session:**
+- Click the save icon to save all variables to a `.pkl` file
+- Uses `dill` if available (handles more types), otherwise falls back to `pickle`
+- Useful for preserving your workspace between sessions
+
+**Load session:**
+- Click the load icon to restore variables from a previously saved `.pkl` file
+- Variables are added to the current namespace
 
 ## Keyboard Shortcuts
 
@@ -130,6 +136,13 @@ The Variable Explorer works with Python code executed through:
 | Cancel inline edit | `Escape` |
 | Close modal | `Escape` or click outside |
 | Save in text editor | `Cmd+S` / `Ctrl+S` |
+
+## Right-Click Menu
+
+When editing a Python file, right-click to access:
+- **Run Current Python File** - Execute the file and capture variables (F5)
+- **Run Python File (Terminal + Variable Explorer)** - Run in both terminal and Variable Explorer
+- **Run Selection/Line** - Execute selected code (when text is selected)
 
 ## Data Type Support
 
@@ -169,12 +182,22 @@ Variable Explorer supports 33+ data types with distinct color coding:
 
 ## Configuration
 
-The extension uses your default Python interpreter configured in VS Code:
+The extension provides the following settings:
+
 ```json
 {
-  "python.defaultInterpreterPath": "/path/to/python"
+  // Python interpreter path (auto-detects if empty)
+  "variableExplorer.pythonPath": "",
+
+  // Expose local variables from main() function
+  "variableExplorer.captureMainLocals": false,
+
+  // Monitor terminal for Python execution
+  "variableExplorer.monitorTerminalExecution": true
 }
 ```
+
+**Python Path**: Leave empty to auto-detect. Uses `python3` on macOS/Linux, `python` on Windows. Falls back to the Python extension's interpreter if available.
 
 ## Tips & Tricks
 
@@ -192,6 +215,7 @@ The extension uses your default Python interpreter configured in VS Code:
 12. **Variable Search**: Use the main search function to quickly find specific variables in large namespaces
 13. **Filters**: Exclude private variables and other patterns to focus on relevant data
 14. **Color Themes**: Choose from 3 visual color palette themes to personalize your type color-coding
+15. **Save/Load Sessions**: Use the toolbar buttons to save your variables to disk and restore them later
 
 ## Troubleshooting
 
@@ -225,7 +249,17 @@ MIT License - See LICENSE file for details
 
 ## Changelog
 
-### Version 0.2.0 (Latest)
+### Version 0.2.1 (Latest)
+- **Session Save/Load**: Save your entire variable namespace to a `.pkl` file and restore it later
+  - Uses `dill` serializer if available for better type support, falls back to `pickle`
+  - Preserves DataFrames, arrays, and most Python objects between sessions
+- **macOS Compatibility**: Improved Python path detection - now uses `python3` on macOS/Linux by default
+- **Better Error Messages**: More helpful error messages when Python backend fails to start
+- **New Run Command**: Added "Run Python File (Terminal + Variable Explorer)" for simultaneous execution
+- **Terminal Monitoring**: Optional monitoring of terminal execution to auto-capture variables (configurable)
+- **Removed Refresh Button**: Simplified toolbar by removing the redundant refresh button
+
+### Version 0.2.0
 - **Working Directory Fix**: Python backend now runs in workspace folder, fixing relative file path errors (e.g., `pd.read_csv('file.csv')`)
 - **Panel Lifecycle Fix**: Fixed issue where variables wouldn't display after closing and reopening Variable Explorer
 - **Callback Management**: Improved message callback handling when panel is recreated

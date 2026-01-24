@@ -104,6 +104,54 @@ class VariableExplorerPanel {
             case 'exportCSV':
                 this.handleExportCSV(message);
                 break;
+            case 'saveSession':
+                this.handleSaveSession();
+                break;
+            case 'loadSession':
+                this.handleLoadSession();
+                break;
+        }
+    }
+
+    async handleSaveSession() {
+        try {
+            // Show save dialog
+            const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file('session.pkl'),
+                filters: {
+                    'Pickle Files': ['pkl'],
+                    'All Files': ['*']
+                },
+                title: 'Save Variable Explorer Session'
+            });
+
+            if (uri) {
+                // Send save command to Python backend
+                this.pythonManager.saveSession(uri.fsPath);
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to save session: ${error.message}`);
+        }
+    }
+
+    async handleLoadSession() {
+        try {
+            // Show open dialog
+            const uris = await vscode.window.showOpenDialog({
+                canSelectMany: false,
+                filters: {
+                    'Pickle Files': ['pkl'],
+                    'All Files': ['*']
+                },
+                title: 'Load Variable Explorer Session'
+            });
+
+            if (uris && uris.length > 0) {
+                // Send load command to Python backend
+                this.pythonManager.loadSession(uris[0].fsPath);
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to load session: ${error.message}`);
         }
     }
 
@@ -139,6 +187,26 @@ class VariableExplorerPanel {
         if (response.status === 'error') {
             vscode.window.showErrorMessage(`Variable Explorer: ${response.error}`);
             // Still update variables if present
+            if (response.variables) {
+                this.panel.webview.postMessage({
+                    command: 'updateVariables',
+                    variables: response.variables
+                });
+            }
+        } else if (response.saved_count !== undefined) {
+            // Handle save session response
+            const skippedCount = response.skipped_vars ? response.skipped_vars.length : 0;
+            let message = `Saved ${response.saved_count} variable(s) using ${response.serializer}`;
+            if (skippedCount > 0) {
+                message += ` (${skippedCount} skipped)`;
+            }
+            vscode.window.showInformationMessage(message);
+        } else if (response.loaded_count !== undefined) {
+            // Handle load session response
+            vscode.window.showInformationMessage(
+                `Loaded ${response.loaded_count} variable(s) using ${response.serializer}`
+            );
+            // Update the variables display
             if (response.variables) {
                 this.panel.webview.postMessage({
                     command: 'updateVariables',
