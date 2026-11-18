@@ -2,7 +2,7 @@
   "name": "variable-explorer",
   "displayName": "Variable Explorer",
   "description": "A powerful variable inspection and editing tool for Python development, inspired by Spyder's Variable Explorer",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "VariableExplorer",
   "icon": "logo.png",
   "author": {
@@ -75,13 +75,30 @@
         "command": "variableExplorer.support",
         "title": "Support Variable Explorer",
         "category": "Variable Explorer"
+      },
+      {
+        "command": "variableExplorer.restartBackend",
+        "title": "Restart Python Backend",
+        "category": "Variable Explorer",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "variableExplorer.interrupt",
+        "title": "Interrupt Running Code",
+        "category": "Variable Explorer",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "variableExplorer.showOutput",
+        "title": "Show Output",
+        "category": "Variable Explorer"
       }
     ],
     "keybindings": [
       {
         "command": "variableExplorer.runFile",
         "key": "f5",
-        "when": "editorTextFocus && editorLangId == python"
+        "when": "editorTextFocus && editorLangId == python && !inDebugMode && config.variableExplorer.useF5Keybinding"
       },
       {
         "command": "variableExplorer.runSelection",
@@ -126,7 +143,8 @@
         "variableExplorer.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Path to Python interpreter. Leave empty to auto-detect (uses python3 on macOS/Linux, python on Windows). Falls back to the Python extension's interpreter if available."
+          "description": "Path to the Python interpreter used by the Variable Explorer. Supports ${workspaceFolder}, ${env:VAR} and ~. Leave empty to use the interpreter selected in the Python extension, then python.defaultInterpreterPath, then a .venv/venv in the workspace, then python3/python on PATH.",
+          "scope": "resource"
         },
         "variableExplorer.captureMainLocals": {
           "type": "boolean",
@@ -137,11 +155,47 @@
           "type": "boolean",
           "default": true,
           "description": "Monitor terminal execution to capture variables when using the 'Run Python File' button or running Python in terminal"
+        },
+        "variableExplorer.extraPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Additional folders added to sys.path when running code (like PYTHONPATH). Relative paths are resolved against the workspace folder; ${workspaceFolder} is supported. The running file's own folder is always added automatically."
+        },
+        "variableExplorer.reloadUserModules": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-import modules from your workspace every time a file is run, so edits to helper modules take effect without restarting (like Spyder's User Module Reloader)."
+        },
+        "variableExplorer.maxDataFrameRows": {
+          "type": "integer",
+          "default": 50000,
+          "minimum": 100,
+          "description": "Maximum number of DataFrame/Series rows loaded into the viewer. CSV export always writes all rows."
+        },
+        "variableExplorer.showOutputOnRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the 'Variable Explorer' output channel (print output and tracebacks) when running a file or selection with F5/F9."
+        },
+        "variableExplorer.useF5Keybinding": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use F5 to run the current Python file in the Variable Explorer. Disable to give F5 back to the debugger (F5 never overrides an active debug session)."
         }
       }
     }
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.2"
+  },
+  "scripts": {
+    "test": "npm run test:js && npm run test:python",
+    "test:js": "node --test test/js/*.test.js",
+    "test:python": "python3 -m unittest discover -s test/python -v",
+    "package": "vsce package"
   }
 }

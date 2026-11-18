@@ -13,3 +13,4 @@ icon_backup.png
 test*.py
 *.pkl
 **/pytest.py
+test/**

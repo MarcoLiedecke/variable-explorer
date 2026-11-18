@@ -3,232 +3,231 @@ const vscode = require('vscode');
 const path = require('path');
 const { getWebviewContent } = require('./webviewContent');
 
+// Responses whose `variables` should refresh the table.
+const VARIABLE_COMMANDS = new Set([
+    'run_file', 'run_code', 'get_variables', 'update_variable', 'clear_namespace', 'load_session'
+]);
+
 class VariableExplorerPanel {
+    /**
+     * @param {vscode.ExtensionContext} context
+     * @param {import('../pythonManager').PythonManager} pythonManager
+     * @param {() => void} onDispose
+     */
     constructor(context, pythonManager, onDispose) {
         this.context = context;
         this.pythonManager = pythonManager;
         this.panel = null;
         this.onDisposeCallback = onDispose;
+        this.disposables = [];
 
         this.createPanel();
-        this.startPythonBackend();
+        this.disposables.push(
+            pythonManager.onMessage(msg => this.handlePythonResponse(msg)),
+            pythonManager.onStateChange(() => this.postStatus())
+        );
+        // Populate immediately (starts the backend if needed).
+        this.pythonManager.getVariables().catch(() => {});
     }
 
     createPanel() {
-        // Get icon URI for the webview panel tab
-        const iconPath = vscode.Uri.file(
-            path.join(this.context.extensionPath, 'logo.png')
-        );
-
         this.panel = vscode.window.createWebviewPanel(
             'variableExplorer',
             'Variable Explorer',
-            vscode.ViewColumn.Two,
+            { viewColumn: vscode.ViewColumn.Two, preserveFocus: true },
             {
                 enableScripts: true,
-                retainContextWhenHidden: true
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.file(this.context.extensionPath)]
             }
         );
-
-        // Set the icon for the webview panel tab
-        this.panel.iconPath = iconPath;
-
+        this.panel.iconPath = vscode.Uri.file(path.join(this.context.extensionPath, 'logo.png'));
         this.panel.webview.html = getWebviewContent(this.panel.webview, this.context.extensionPath);
 
-        this.panel.webview.onDidReceiveMessage(
-            message => this.handleMessage(message)
-        );
+        this.disposables.push(this.panel.webview.onDidReceiveMessage(message => {
+            Promise.resolve(this.handleMessage(message)).catch(e => {
+                vscode.window.showErrorMessage(`Variable Explorer: ${e.message}`);
+            });
+        }));
 
         this.panel.onDidDispose(() => {
             this.panel = null;
-            // Don't dispose the Python backend - keep it running for other operations
-            // Notify extension.js that the panel was disposed
+            this.disposables.forEach(d => d.dispose());
+            this.disposables = [];
+            // The Python backend keeps running so variables survive closing the panel.
             if (this.onDisposeCallback) {
                 this.onDisposeCallback();
             }
         });
     }
 
-    startPythonBackend() {
-        if (!this.pythonManager.isRunning()) {
-            this.pythonManager.start((response) => {
-                this.handlePythonResponse(response);
-            });
-        } else {
-            // Backend is already running, just update the callback and request current variables
-            this.pythonManager.start((response) => {
-                this.handlePythonResponse(response);
-            });
-            // Request current variables to populate the reopened panel
-            this.pythonManager.getVariables();
+    post(message) {
+        if (this.panel) {
+            this.panel.webview.postMessage(message);
         }
     }
 
-    handleMessage(message) {
+    postStatus() {
+        const pm = this.pythonManager;
+        this.post({
+            command: 'status',
+            running: pm.isRunning(),
+            busy: pm.isBusy(),
+            python: pm.info ? `Python ${pm.info.version}` : '',
+            pythonPath: pm.info ? pm.info.python : ''
+        });
+    }
+
+    async handleMessage(message) {
+        const pm = this.pythonManager;
         switch (message.command) {
+            case 'ready':
+                this.postStatus();
+                if (pm.isRunning()) {
+                    pm.getVariables().catch(() => {});
+                }
+                this.post({
+                    command: 'setCaptureMainLocals',
+                    value: vscode.workspace.getConfiguration('variableExplorer').get('captureMainLocals', false)
+                });
+                break;
             case 'refresh':
-                if (!this.pythonManager.isRunning()) {
-                    // Try to restart the backend
-                    this.startPythonBackend();
-                    setTimeout(() => {
-                        if (this.pythonManager.isRunning()) {
-                            this.pythonManager.getVariables();
-                        }
-                    }, 500);
-                } else {
-                    this.pythonManager.getVariables();
+                await pm.getVariables().catch(() => {});
+                break;
+            case 'viewVariable': {
+                const r = await pm.getDetails(message.name, message.path);
+                if (r.status === 'error') {
+                    vscode.window.showWarningMessage(`Variable Explorer: ${r.error}`);
                 }
                 break;
-            case 'viewVariable':
-                this.pythonManager.getDetails(message.name, message.path);
+            }
+            case 'updateVariable': {
+                const r = await pm.updateVariable(message.name, message.type, message.value);
+                if (r.status === 'error') {
+                    vscode.window.showErrorMessage(`Variable Explorer: ${r.error}`);
+                }
                 break;
-            case 'updateVariable':
-                this.pythonManager.updateVariable(message.name, message.type, message.value);
-                break;
+            }
             case 'clearNamespace':
-                console.log('Clearing namespace');
-                this.pythonManager.clearNamespace();
+                await pm.clearNamespace().catch(() => {});
                 break;
             case 'getCaptureMainLocals':
-                // Send the current setting value to the webview
-                const currentValue = vscode.workspace.getConfiguration('variableExplorer').get('captureMainLocals', false);
-                this.panel.webview.postMessage({
+                this.post({
                     command: 'setCaptureMainLocals',
-                    value: currentValue
+                    value: vscode.workspace.getConfiguration('variableExplorer').get('captureMainLocals', false)
                 });
                 break;
             case 'updateCaptureMainLocals':
-                // Update the VS Code setting
-                vscode.workspace.getConfiguration('variableExplorer').update('captureMainLocals', message.value, vscode.ConfigurationTarget.Global);
+                await vscode.workspace.getConfiguration('variableExplorer')
+                    .update('captureMainLocals', !!message.value, vscode.ConfigurationTarget.Global);
                 break;
             case 'exportCSV':
-                this.handleExportCSV(message);
+                await this.handleExportCSV(message);
                 break;
             case 'saveSession':
-                this.handleSaveSession();
+                await this.handleSaveSession();
                 break;
             case 'loadSession':
-                this.handleLoadSession();
+                await this.handleLoadSession();
+                break;
+            case 'interrupt':
+                await vscode.commands.executeCommand('variableExplorer.interrupt');
+                break;
+            case 'restart':
+                await vscode.commands.executeCommand('variableExplorer.restartBackend');
+                break;
+            case 'showOutput':
+                await vscode.commands.executeCommand('variableExplorer.showOutput');
                 break;
         }
+    }
+
+    defaultUri(fileName) {
+        const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
+        return folder ? vscode.Uri.joinPath(folder.uri, fileName) : vscode.Uri.file(fileName);
     }
 
     async handleSaveSession() {
-        try {
-            // Show save dialog
-            const uri = await vscode.window.showSaveDialog({
-                defaultUri: vscode.Uri.file('session.pkl'),
-                filters: {
-                    'Pickle Files': ['pkl'],
-                    'All Files': ['*']
-                },
-                title: 'Save Variable Explorer Session'
-            });
-
-            if (uri) {
-                // Send save command to Python backend
-                this.pythonManager.saveSession(uri.fsPath);
-            }
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to save session: ${error.message}`);
+        const uri = await vscode.window.showSaveDialog({
+            defaultUri: this.defaultUri('session.pkl'),
+            filters: { 'Pickle Files': ['pkl'], 'All Files': ['*'] },
+            title: 'Save Variable Explorer Session'
+        });
+        if (!uri) {
+            return;
         }
+        const r = await this.pythonManager.saveSession(uri.fsPath);
+        if (r.status === 'error') {
+            vscode.window.showErrorMessage(`Variable Explorer: ${r.error}`);
+            return;
+        }
+        const skipped = r.skipped_vars ? r.skipped_vars.length : 0;
+        vscode.window.showInformationMessage(
+            `Saved ${r.saved_count} variable(s) using ${r.serializer}` + (skipped ? ` (${skipped} skipped)` : ''));
     }
 
     async handleLoadSession() {
-        try {
-            // Show open dialog
-            const uris = await vscode.window.showOpenDialog({
-                canSelectMany: false,
-                filters: {
-                    'Pickle Files': ['pkl'],
-                    'All Files': ['*']
-                },
-                title: 'Load Variable Explorer Session'
-            });
-
-            if (uris && uris.length > 0) {
-                // Send load command to Python backend
-                this.pythonManager.loadSession(uris[0].fsPath);
-            }
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to load session: ${error.message}`);
+        const uris = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            defaultUri: this.defaultUri(''),
+            filters: { 'Pickle Files': ['pkl'], 'All Files': ['*'] },
+            title: 'Load Variable Explorer Session'
+        });
+        if (!uris || uris.length === 0) {
+            return;
         }
+        const r = await this.pythonManager.loadSession(uris[0].fsPath);
+        if (r.status === 'error') {
+            vscode.window.showErrorMessage(`Variable Explorer: ${r.error}`);
+            return;
+        }
+        vscode.window.showInformationMessage(`Loaded ${r.loaded_count} variable(s) using ${r.serializer}`);
     }
 
+    /** Filtered rows come pre-built from the webview; full exports are written by pandas. */
     async handleExportCSV(message) {
-        try {
-            const { fileName, csvData, rowCount, columnCount } = message;
-
-            // Show save dialog
-            const uri = await vscode.window.showSaveDialog({
-                defaultUri: vscode.Uri.file(fileName),
-                filters: {
-                    'CSV Files': ['csv'],
-                    'All Files': ['*']
-                }
-            });
-
-            if (uri) {
-                // Write the CSV data to the selected file
-                const buffer = Buffer.from(csvData, 'utf8');
-                await vscode.workspace.fs.writeFile(uri, buffer);
-
-                vscode.window.showInformationMessage(
-                    `Exported ${rowCount} rows × ${columnCount} columns to ${path.basename(uri.fsPath)}`
-                );
-            }
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to export CSV: ${error.message}`);
+        const baseName = String(message.name || 'dataframe').replace(/[^\w.-]+/g, '_');
+        const uri = await vscode.window.showSaveDialog({
+            defaultUri: this.defaultUri(`${baseName}_export.csv`),
+            filters: { 'CSV Files': ['csv'], 'All Files': ['*'] }
+        });
+        if (!uri) {
+            return;
         }
+        if (typeof message.csvData === 'string') {
+            // Filtered rows, already converted to CSV by the webview
+            await vscode.workspace.fs.writeFile(uri, Buffer.from(message.csvData, 'utf8'));
+            vscode.window.showInformationMessage(
+                `Exported ${message.rowCount} rows × ${message.columnCount} columns to ${path.basename(uri.fsPath)}`);
+            return;
+        }
+        const r = await this.pythonManager.exportCsv(message.name, message.path, uri.fsPath);
+        if (r.status === 'error') {
+            vscode.window.showErrorMessage(`Failed to export CSV: ${r.error}`);
+            return;
+        }
+        vscode.window.showInformationMessage(
+            `Exported ${r.rows} rows × ${r.columns} columns to ${path.basename(uri.fsPath)}`);
     }
 
     handlePythonResponse(response) {
-        if (!this.panel) return;
-        if (response.status === 'error') {
-            vscode.window.showErrorMessage(`Variable Explorer: ${response.error}`);
-            // Still update variables if present
-            if (response.variables) {
-                this.panel.webview.postMessage({
-                    command: 'updateVariables',
-                    variables: response.variables
-                });
+        if (!this.panel) {
+            return;
+        }
+        if (response.command === 'get_details') {
+            if (response.status !== 'error') {
+                this.post({ command: 'showDetails', data: response });
             }
-        } else if (response.saved_count !== undefined) {
-            // Handle save session response
-            const skippedCount = response.skipped_vars ? response.skipped_vars.length : 0;
-            let message = `Saved ${response.saved_count} variable(s) using ${response.serializer}`;
-            if (skippedCount > 0) {
-                message += ` (${skippedCount} skipped)`;
-            }
-            vscode.window.showInformationMessage(message);
-        } else if (response.loaded_count !== undefined) {
-            // Handle load session response
-            vscode.window.showInformationMessage(
-                `Loaded ${response.loaded_count} variable(s) using ${response.serializer}`
-            );
-            // Update the variables display
-            if (response.variables) {
-                this.panel.webview.postMessage({
-                    command: 'updateVariables',
-                    variables: response.variables
-                });
-            }
-        } else if (response.variables) {
-            this.panel.webview.postMessage({
-                command: 'updateVariables',
-                variables: response.variables
-            });
-        } else if (response.name) {
-            this.panel.webview.postMessage({
-                command: 'showDetails',
-                data: response
-            });
+            return;
+        }
+        if (VARIABLE_COMMANDS.has(response.command) && Array.isArray(response.variables)) {
+            this.post({ command: 'updateVariables', variables: response.variables });
         }
     }
 
-    reveal() {
+    reveal(preserveFocus = false) {
         if (this.panel) {
-            this.panel.reveal(vscode.ViewColumn.Two);
+            this.panel.reveal(this.panel.viewColumn || vscode.ViewColumn.Two, preserveFocus);
         }
     }
 

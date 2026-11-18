@@ -1,48 +1,37 @@
-// src/terminalMonitor.js - Monitor terminal execution to detect "Run Python File" button usage
+// src/terminalMonitor.js - Mirror "Run Python File" terminal runs into the Variable Explorer.
 const vscode = require('vscode');
+const fs = require('fs');
 const path = require('path');
+const { parsePythonRunCommand } = require('./utils');
+
+// How long to wait for shell integration to report the command before falling
+// back to "a Python terminal opened while a Python file is active".
+const OPEN_FALLBACK_DELAY_MS = 2500;
 
 class TerminalMonitor {
-    constructor(getPanel, pythonManager) {
-        this.getPanel = getPanel;
-        this.pythonManager = pythonManager;
+    /**
+     * @param {import('./runner').Runner} runner
+     */
+    constructor(runner) {
+        this.runner = runner;
         this.disposables = [];
         this.enabled = true;
-        this.lastRunFile = null;
-        this.lastRunTime = 0;
+        this.pendingOpen = new Map();
     }
 
     start() {
-        // Check if monitoring is enabled
         this.updateEnabledFromConfig();
-
-        // Listen for configuration changes
-        const configDisposable = vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('variableExplorer.monitorTerminalExecution')) {
-                this.updateEnabledFromConfig();
-            }
-        });
-        this.disposables.push(configDisposable);
-
-        // Listen for terminal creation (first run detection)
-        const terminalOpenDisposable = vscode.window.onDidOpenTerminal((terminal) => {
-            this.handleTerminalOpen(terminal);
-        });
-        this.disposables.push(terminalOpenDisposable);
-
-        // Listen for shell execution if available (subsequent runs with shell integration)
-        if (vscode.window.onDidStartTerminalShellExecution) {
-            const startExecDisposable = vscode.window.onDidStartTerminalShellExecution((event) => {
-                this.handleShellExecution(event);
-            });
-            this.disposables.push(startExecDisposable);
-        }
-
-        if (vscode.window.onDidEndTerminalShellExecution) {
-            const endExecDisposable = vscode.window.onDidEndTerminalShellExecution((event) => {
-                this.handleShellExecutionEnd(event);
-            });
-            this.disposables.push(endExecDisposable);
+        this.disposables.push(
+            vscode.workspace.onDidChangeConfiguration(e => {
+                if (e.affectsConfiguration('variableExplorer.monitorTerminalExecution')) {
+                    this.updateEnabledFromConfig();
+                }
+            }),
+            vscode.window.onDidOpenTerminal(t => this.handleTerminalOpen(t)),
+            vscode.window.onDidCloseTerminal(t => this.clearPending(t))
+        );
+        if (typeof vscode.window.onDidStartTerminalShellExecution === 'function') {
+            this.disposables.push(vscode.window.onDidStartTerminalShellExecution(e => this.handleShellExecution(e)));
         }
     }
 
@@ -50,120 +39,67 @@ class TerminalMonitor {
         this.enabled = vscode.workspace.getConfiguration('variableExplorer').get('monitorTerminalExecution', true);
     }
 
+    isPythonTerminal(terminal) {
+        const name = (terminal && terminal.name) || '';
+        return /python/i.test(name) && !/debug/i.test(name);
+    }
+
+    clearPending(terminal) {
+        const timer = this.pendingOpen.get(terminal);
+        if (timer) {
+            clearTimeout(timer);
+            this.pendingOpen.delete(terminal);
+        }
+    }
+
     handleTerminalOpen(terminal) {
-        if (!this.enabled) return;
-
-        const name = terminal.name || '';
-        const isPythonTerminal = name === 'Python' ||
-            (name.includes('Python') && !name.includes('Debugger'));
-
-        if (!isPythonTerminal) return;
-
-        // Get the active Python file
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'python') return;
-
-        const filePath = editor.document.uri.fsPath;
-
-        // Debounce - don't re-run if we just ran this file
-        const now = Date.now();
-        if (this.lastRunFile === filePath && now - this.lastRunTime < 2000) {
+        if (!this.enabled || !this.isPythonTerminal(terminal)) {
             return;
         }
-
-        this.runFileInExplorer(filePath);
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== 'python' || editor.document.uri.scheme !== 'file') {
+            return;
+        }
+        const filePath = editor.document.uri.fsPath;
+        // Prefer the exact command line from shell integration; only fall back
+        // to "the active file" if no command is reported for this terminal.
+        this.clearPending(terminal);
+        this.pendingOpen.set(terminal, setTimeout(() => {
+            this.pendingOpen.delete(terminal);
+            if (this.enabled) {
+                this.runner.runFile(filePath, { shadow: true, dedupe: true });
+            }
+        }, OPEN_FALLBACK_DELAY_MS));
     }
 
     handleShellExecution(event) {
-        if (!this.enabled) return;
-
-        const terminal = event.terminal;
-        const name = terminal.name || '';
-
-        // Only process Python terminals
-        const isPythonTerminal = name === 'Python' ||
-            (name.includes('Python') && !name.includes('Debugger'));
-        if (!isPythonTerminal) return;
-
-        const execution = event.execution;
-        const commandLine = execution.commandLine;
-
-        if (commandLine && commandLine.value) {
-            this.checkCommandForPython(commandLine.value);
+        if (!this.enabled) {
+            return;
         }
-    }
-
-    handleShellExecutionEnd(event) {
-        if (!this.enabled) return;
-
         const terminal = event.terminal;
-        const name = terminal.name || '';
-
-        // Only process Python terminals
-        const isPythonTerminal = name === 'Python' ||
-            (name.includes('Python') && !name.includes('Debugger'));
-        if (!isPythonTerminal) return;
-
-        const execution = event.execution;
-        const commandLine = execution.commandLine;
-
-        if (commandLine && commandLine.value) {
-            this.checkCommandForPython(commandLine.value);
+        this.clearPending(terminal);
+        if (!this.isPythonTerminal(terminal)) {
+            return;
         }
-    }
-
-    checkCommandForPython(command) {
-        // Parse the command to see if it's running a Python file
-        const pythonRunPattern = /(?:python3?|.*[\/\\]python[^\/\\]*)\s+["']?([^"'\s]+\.py)["']?/i;
-        const match = command.match(pythonRunPattern);
-
-        if (match) {
-            let filePath = match[1];
-
-            // If it's a relative path, resolve it against workspace
-            if (!path.isAbsolute(filePath)) {
-                const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-                if (workspaceFolder) {
-                    filePath = path.join(workspaceFolder, filePath);
-                }
-            }
-
-            // Debounce
-            const now = Date.now();
-            if (this.lastRunFile === filePath && now - this.lastRunTime < 2000) {
+        const execution = event.execution;
+        const commandLine = execution && execution.commandLine && execution.commandLine.value;
+        let filePath = parsePythonRunCommand(commandLine);
+        if (!filePath) {
+            return;
+        }
+        if (!path.isAbsolute(filePath)) {
+            const cwd = (execution.cwd && execution.cwd.fsPath) ||
+                (terminal.shellIntegration && terminal.shellIntegration.cwd && terminal.shellIntegration.cwd.fsPath) ||
+                (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0].uri.fsPath);
+            if (!cwd) {
                 return;
             }
-
-            this.runFileInExplorer(filePath);
+            filePath = path.resolve(cwd, filePath);
         }
-    }
-
-    runFileInExplorer(filePath) {
-        // Track last run for debouncing
-        this.lastRunFile = filePath;
-        this.lastRunTime = Date.now();
-
-        // Get or create the panel
-        const panel = this.getPanel();
-        if (panel) {
-            panel.reveal();
-
-            // Wait for backend to be ready
-            const executeRun = () => {
-                if (this.pythonManager.isRunning()) {
-                    this.pythonManager.runFile(filePath);
-                } else {
-                    // Backend might be starting, wait a bit
-                    setTimeout(() => {
-                        if (this.pythonManager.isRunning()) {
-                            this.pythonManager.runFile(filePath);
-                        }
-                    }, 1000);
-                }
-            };
-
-            executeRun();
+        if (!fs.existsSync(filePath)) {
+            return;
         }
+        this.runner.runFile(filePath, { shadow: true, dedupe: true });
     }
 
     setEnabled(enabled) {
@@ -171,6 +107,10 @@ class TerminalMonitor {
     }
 
     dispose() {
+        for (const timer of this.pendingOpen.values()) {
+            clearTimeout(timer);
+        }
+        this.pendingOpen.clear();
         this.disposables.forEach(d => d.dispose());
         this.disposables = [];
     }
