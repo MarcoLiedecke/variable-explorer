@@ -960,3 +960,33 @@ body[data-palette="cold"] {
     border-top-right-radius: 2px;
     border-bottom-right-radius: 2px;
 }
+/* Backend status in the toolbar */
+.status-text {
+    align-self: center;
+    font-size: 11px;
+    opacity: 0.7;
+    margin-right: 8px;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+
+.status-text:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+
+.status-text.busy {
+    opacity: 1;
+    color: var(--vscode-progressBar-background, var(--vscode-foreground));
+}
+
+/* "Showing first N of M ..." notes */
+.truncation-note {
+    width: 100%;
+    text-align: center;
+    margin-top: 6px;
+    font-size: 11px;
+    font-style: italic;
+    color: var(--vscode-descriptionForeground);
+}

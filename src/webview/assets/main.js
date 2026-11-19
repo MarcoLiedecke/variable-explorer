@@ -10,13 +10,16 @@ let arrayFormat = '%.4f'; // Default format for array values
 let arrayCellWidth = 80; // Default cell width for arrays
 let arrayCellHeight = 30; // Default cell height for arrays
 
-// DataFrame pagination state
-let dfCurrentPage = 1;
+// DataFrame viewer state (see displayDataFrame)
+let dfState = null;
 let dfRowsPerPage = 100;
-let dfVisibleColumns = null; // null means show all columns
-let dfTotalRowCount = 0; // Store total row count for the current DataFrame
-let dfSearchTerm = ''; // Current search/filter term
-let dfFilteredData = null; // Filtered data (null means no filter active)
+
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+// Every value coming from Python is untrusted text: escape before using innerHTML.
+function escapeHtml(value) {
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, c => HTML_ESCAPES[c]);
+}
 
 // Filter state - default: private, callables, and modules are excluded
 let filterOptions = {
@@ -44,71 +47,119 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('filterModules').checked = filterOptions.modules;
 
     // Load saved palette preference
-    const savedPalette = localStorage.getItem('colorPalette') || 'default';
+    let savedPalette = 'default';
+    try {
+        savedPalette = localStorage.getItem('colorPalette') || 'default';
+    } catch (e) { /* storage unavailable */ }
     selectPalette(savedPalette);
 
-    // Load captureMainLocals setting from VS Code configuration
-    vscode.postMessage({ command: 'getCaptureMainLocals' });
+    // Event delegation for the variable table (one listener instead of one per row)
+    const tbody = document.getElementById('varTableBody');
+    tbody.addEventListener('click', onVariableTableClick);
+    tbody.addEventListener('dblclick', onVariableTableDblClick);
+
+    // Tell the extension we're ready (it replies with settings, status and variables)
+    vscode.postMessage({ command: 'ready' });
 });
 
 window.addEventListener('message', event => {
     const message = event.data;
     if (message.command === 'updateVariables') {
-        allVariables = message.variables;
+        allVariables = message.variables || [];
         applyFiltersAndUpdate();
     } else if (message.command === 'showDetails') {
         showDetailsModal(message.data);
     } else if (message.command === 'setCaptureMainLocals') {
-        document.getElementById('captureMainLocals').checked = message.value;
+        document.getElementById('captureMainLocals').checked = !!message.value;
+    } else if (message.command === 'status') {
+        updateStatus(message);
     }
 });
+
+function updateStatus(status) {
+    const text = document.getElementById('statusText');
+    const stopBtn = document.getElementById('interruptBtn');
+    if (text) {
+        text.textContent = status.busy ? 'Running…' : (status.running ? status.python : 'Backend not started');
+        text.title = status.pythonPath || '';
+        text.classList.toggle('busy', !!status.busy);
+    }
+    if (stopBtn) {
+        stopBtn.style.display = status.busy ? '' : 'none';
+    }
+}
+
+function interruptExecution() {
+    vscode.postMessage({ command: 'interrupt' });
+}
+
+function showOutput() {
+    vscode.postMessage({ command: 'showOutput' });
+}
 
 function updateTable(variables) {
     const tbody = document.getElementById('varTableBody');
     const emptyState = document.getElementById('emptyState');
     const tableContainer = document.getElementById('tableContainer');
-    tbody.innerHTML = '';
 
     if (variables.length === 0) {
-        // Show empty state, hide table
+        tbody.innerHTML = '';
         emptyState.style.display = 'flex';
         tableContainer.style.display = 'none';
         return;
     }
 
-    // Hide empty state, show table
     emptyState.style.display = 'none';
     tableContainer.style.display = 'block';
 
-    variables.forEach(v => {
-        const row = tbody.insertRow();
+    // Build all rows in one go: much faster than insertRow() per variable.
+    const html = new Array(variables.length);
+    for (let i = 0; i < variables.length; i++) {
+        const v = variables[i];
+        const value = String(v.value);
         const isClickable = isCollectionType(v.type);
-        const isLongString = v.type === 'str' && v.value.length > 40;
+        const isLongString = v.type === 'str' && value.length > 40;
         const isEditable = isScalarType(v.type) && !isLongString;
+        const classes = ['col-value', getValueClass(v.type)];
+        if (isClickable || isLongString) classes.push('clickable');
+        if (isEditable) classes.push('editable');
+        html[i] = `<tr data-index="${i}">` +
+            `<td class="col-name">${escapeHtml(v.name)}</td>` +
+            `<td class="col-type">${escapeHtml(v.type)}</td>` +
+            `<td class="col-size">${escapeHtml(v.size)}</td>` +
+            `<td class="${classes.join(' ')}" title="${escapeHtml(value)}">${escapeHtml(value)}</td>` +
+            '</tr>';
+    }
+    tbody.innerHTML = html.join('');
+}
 
-        row.innerHTML = `
-            <td class="col-name">${v.name}</td>
-            <td class="col-type">${v.type}</td>
-            <td class="col-size">${v.size}</td>
-            <td class="col-value ${getValueClass(v.type)} ${isClickable ? 'clickable' : ''} ${isEditable ? 'editable' : ''} ${isLongString ? 'clickable' : ''}">${v.value}</td>
-        `;
+function variableForEvent(event) {
+    const row = event.target.closest('tr[data-index]');
+    if (!row) return null;
+    return { row, v: currentVariables[Number(row.dataset.index)] };
+}
 
-        if (isClickable) {
-            row.onclick = () => viewDetails(v.name, v.type);
-        } else if (isLongString) {
-            const valueCell = row.cells[3];
-            valueCell.ondblclick = (e) => {
-                e.stopPropagation();
-                openInEditor(v.name, v.value);
-            };
-        } else if (isEditable) {
-            const valueCell = row.cells[3];
-            valueCell.ondblclick = (e) => {
-                e.stopPropagation();
-                makeEditable(valueCell, v.name, v.type, v.value);
-            };
-        }
-    });
+function onVariableTableClick(event) {
+    const hit = variableForEvent(event);
+    if (!hit || !hit.v) return;
+    if (event.target.closest('input')) return; // editing in progress
+    if (isCollectionType(hit.v.type)) {
+        viewDetails(hit.v.name, hit.v.type);
+    }
+}
+
+function onVariableTableDblClick(event) {
+    const hit = variableForEvent(event);
+    if (!hit || !hit.v) return;
+    const v = hit.v;
+    const valueCell = hit.row.cells[3];
+    if (event.target !== valueCell) return;
+    const isLongString = v.type === 'str' && String(v.value).length > 40;
+    if (isLongString) {
+        openInEditor(v.name);
+    } else if (isScalarType(v.type) && !isCollectionType(v.type)) {
+        makeEditable(valueCell, v.name, v.type, v.value);
+    }
 }
 
 function isCollectionType(type) {
@@ -121,20 +172,19 @@ function isCollectionType(type) {
             type.includes('ndarray');
 }
 
+// Exact names only: substring checks made e.g. a user class "Point" editable.
+const NUMERIC_TYPE_RE = /^(u?int(8|16|32|64)?|intc|longlong|float(16|32|64|128)?|longdouble|complex(64|128|256)?)$/;
+const SCALAR_TYPE_RE = /^(u?int(8|16|32|64)?|intc|longlong|float(16|32|64)?|longdouble|complex(64|128)?|str|bool|bool_)$/;
+
 function isScalarType(type) {
-    const typeLower = type.toLowerCase();
-    return typeLower.includes('int') ||
-           typeLower.includes('float') ||
-           typeLower === 'str' ||
-           typeLower === 'bool' ||
-           typeLower.includes('complex');
+    return SCALAR_TYPE_RE.test(String(type).toLowerCase());
 }
 
 function getValueClass(type) {
     const typeLower = type.toLowerCase();
 
     // Numeric types
-    if (typeLower.includes('int') || typeLower.includes('float') || typeLower.includes('complex')) {
+    if (NUMERIC_TYPE_RE.test(typeLower)) {
         return 'value-numeric';
     }
     // Decimal and Fraction
@@ -350,7 +400,7 @@ function parseValueForSort(value, type) {
     const typeLower = type.toLowerCase();
 
     // Basic numeric types
-    if (typeLower.includes('int') || typeLower.includes('float') || typeLower.includes('complex')) {
+    if (NUMERIC_TYPE_RE.test(typeLower)) {
         typeOrder = 1;
         sortValue = parseFloat(value);
     } else if (typeLower === 'decimal' || typeLower === 'fraction') {
@@ -549,8 +599,16 @@ function makeEditable(cell, varName, varType, currentValue) {
 }
 
 let currentEditingVar = null;
+let pendingStringEdit = null;
 
-function openInEditor(varName, currentValue) {
+// The table only holds a truncated preview of long strings, so fetch the
+// full value first - saving the preview would silently truncate the variable.
+function openInEditor(varName) {
+    pendingStringEdit = varName;
+    viewDetails(varName, 'str');
+}
+
+function openEditorWithValue(varName, currentValue) {
     currentEditingVar = varName;
 
     const modal = document.getElementById('editorModal');
@@ -599,83 +657,110 @@ function viewDetails(name, type, path = null) {
     vscode.postMessage({ command: 'viewVariable', name: name, type: type, path: path });
 }
 
-function displayListData(items, tbody, rootName, currentPath) {
+const DETAIL_HEADERS = ['Key', 'Type', 'Size', 'Value'];
+const DETAIL_WIDTHS = ['20%', '20%', '15%', '45%'];
+
+// Restore the Key/Type/Size/Value header (the DataFrame view replaces it).
+function resetDetailHeaders() {
+    const thead = document.querySelector('#detailTable thead tr');
+    thead.innerHTML = DETAIL_HEADERS.map((label, i) =>
+        `<th style="width: ${DETAIL_WIDTHS[i]};" onclick="sortModalTable(${i})">` +
+        `<span class="header-text">${label}</span>` +
+        `<div class="resizer" onmousedown="startResize(event, ${i}, true)"></div></th>`
+    ).join('');
+}
+
+function displayListData(items, tbody, rootName, currentPath, data) {
+    const fragment = document.createDocumentFragment();
     items.forEach(item => {
-        const row = tbody.insertRow();
+        const row = document.createElement('tr');
         const isClickable = isCollectionType(item.type);
-
-        row.innerHTML = `
-            <td>${item.index}</td>
-            <td>${item.type}</td>
-            <td>${item.size}</td>
-            <td class="${getValueClass(item.type)} ${isClickable ? 'clickable' : ''}">${item.value}</td>
-        `;
-
+        row.innerHTML =
+            `<td>${escapeHtml(item.index)}</td>` +
+            `<td>${escapeHtml(item.type)}</td>` +
+            `<td>${escapeHtml(item.size)}</td>` +
+            `<td class="${getValueClass(item.type)} ${isClickable ? 'clickable' : ''}" title="${escapeHtml(item.value)}">${escapeHtml(item.value)}</td>`;
         if (isClickable) {
-            const valueCell = row.cells[3];
-            valueCell.onclick = () => {
-                const newPath = [...currentPath, item.index];
-                viewDetails(rootName, item.type, newPath);
-            };
+            row.cells[3].onclick = () => viewDetails(rootName, item.type, [...currentPath, item.index]);
         }
+        fragment.appendChild(row);
     });
+    if (data && data.truncated) {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td colspan="4" class="truncation-note">Showing first ${items.length.toLocaleString()} of ${Number(data.total_items).toLocaleString()} items</td>`;
+        fragment.appendChild(row);
+    }
+    tbody.appendChild(fragment);
+}
+
+function buildBreadcrumb(data) {
+    const title = document.getElementById('modalTitle');
+    title.textContent = '';
+    const path = data.path || [];
+    const addCrumb = (label, crumbPath) => {
+        const span = document.createElement('span');
+        span.className = 'breadcrumb-item clickable';
+        span.textContent = label;
+        span.onclick = () => viewDetails(data.name, data.type, crumbPath);
+        title.appendChild(span);
+    };
+    addCrumb(data.name, null);
+    path.forEach((part, i) => {
+        title.appendChild(document.createTextNode(' → '));
+        addCrumb(part, path.slice(0, i + 1));
+    });
+    const typeSpan = document.createElement('span');
+    typeSpan.style.color = 'var(--vscode-descriptionForeground)';
+    typeSpan.textContent = ` - ${data.type}`;
+    title.appendChild(typeSpan);
 }
 
 function showDetailsModal(data) {
+    // A full string requested for the string editor, not for the detail view.
+    if (pendingStringEdit && data.name === pendingStringEdit && data.type === 'str' && !(data.path && data.path.length)) {
+        pendingStringEdit = null;
+        if (data.full_value === undefined) {
+            return;
+        }
+        openEditorWithValue(data.name, data.full_value);
+        return;
+    }
+
     const modal = document.getElementById('detailModal');
-    const modalTitle = document.getElementById('modalTitle');
     const tbody = document.getElementById('detailTableBody');
     const table = document.getElementById('detailTable');
     const modalFooter = document.getElementById('detailModalFooter');
-
-    // Build breadcrumb navigation
     const path = data.path || [];
-    let breadcrumb = data.name;
-    if (path.length > 0) {
-        breadcrumb += ' → ' + path.join(' → ');
-    }
 
-    // Create breadcrumb with clickable parts
-    let breadcrumbHTML = `<span class="breadcrumb-item clickable" onclick="viewDetails('${data.name}', '${data.type}')">${data.name}</span>`;
-    for (let i = 0; i < path.length; i++) {
-        const partialPath = path.slice(0, i + 1);
-        breadcrumbHTML += ` → <span class="breadcrumb-item clickable" onclick='viewDetails("${data.name}", "${data.type}", ${JSON.stringify(partialPath)})'>${path[i]}</span>`;
-    }
-    breadcrumbHTML += ` <span style="color: var(--vscode-descriptionForeground);">- ${data.type}</span>`;
-
-    modalTitle.innerHTML = breadcrumbHTML;
+    buildBreadcrumb(data);
     tbody.innerHTML = '';
-
-    // Store the data for sorting
     modalData = data;
+    dfState = null;
+    modalSortColumn = 0;
+    modalSortAscending = true;
 
-    // Clean up any previous array container before showing new content
     const oldArrayContainer = document.getElementById('arrayContainer');
     if (oldArrayContainer) {
         oldArrayContainer.remove();
     }
-
-    // Ensure table is visible by default (will be hidden if we're showing an array)
     table.style.display = 'table';
-
-    // Hide footer by default (will be shown by DataFrame display if needed)
     modalFooter.style.display = 'none';
-
-    // Hide search box by default (will be shown by DataFrame display if needed)
     const searchContainer = document.getElementById('dfSearchContainer');
     if (searchContainer) {
         searchContainer.style.display = 'none';
     }
 
-    // Handle different data types
     if (data.array_info) {
         displayNumpyArray(data.array_info, data.name);
     } else if (data.dataframe_info) {
         displayDataFrame(data.dataframe_info, tbody);
-    } else if (data.items && data.items.length > 0) {
-        displayListData(data.items, tbody, data.name, path);
     } else {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px;">No data available</td></tr>';
+        resetDetailHeaders();
+        if (data.items && data.items.length > 0) {
+            displayListData(data.items, tbody, data.name, path, data);
+        } else {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 20px;">No data available</td></tr>';
+        }
     }
 
     modal.style.display = 'block';
@@ -700,17 +785,21 @@ function displayNumpyArray(arrayInfo, arrayName) {
     let gridHTML = '<div class="array-grid-container">';
 
     if (arrayInfo.data && arrayInfo.data.length > 0) {
-        if (arrayInfo.ndim === 1) {
+        const displayNdim = arrayInfo.display_ndim || arrayInfo.ndim;
+        if (arrayInfo.slice) {
+            gridHTML += `<div class="truncation-note">Showing slice ${escapeHtml(arrayInfo.slice)} of ${arrayInfo.shape.join('×')} array</div>`;
+        }
+        if (displayNdim === 1) {
             gridHTML += renderArray1D(arrayInfo.data, arrayInfo.is_numeric);
-        } else if (arrayInfo.ndim === 2) {
-            gridHTML += renderArray2D(arrayInfo.data, arrayInfo.is_numeric);
         } else {
-            gridHTML += `<div style="text-align: center; padding: 20px;">Arrays with ${arrayInfo.ndim} dimensions are not yet supported for visualization.</div>`;
+            gridHTML += renderArray2D(arrayInfo.data, arrayInfo.is_numeric);
         }
 
         if (arrayInfo.truncated) {
             gridHTML += '<div style="text-align: center; margin-top: 10px; font-style: italic; color: var(--vscode-descriptionForeground);">';
-            gridHTML += `Showing first 100×100 elements of ${arrayInfo.shape.join('×')} array`;
+            gridHTML += (arrayInfo.display_ndim || arrayInfo.ndim) === 1
+                ? `Showing first ${arrayInfo.data.length} of ${arrayInfo.shape[arrayInfo.shape.length - 1]} elements`
+                : `Showing first 100×100 elements of ${arrayInfo.shape.join('×')} array`;
             gridHTML += '</div>';
         }
     } else {
@@ -742,12 +831,13 @@ function renderArray1D(data, isNumeric) {
             const value = data[col];
             const formattedValue = formatArrayValue(value);
             const bgColor = getHeatmapColor(value, min, max);
-            html += `<td class="array-cell" style="background-color: ${bgColor}; min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;">${formattedValue}</td>`;
+            const missing = value === null ? ' color: var(--vscode-descriptionForeground); font-style: italic;' : '';
+            html += `<td class="array-cell" style="background-color: ${bgColor}; min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;${missing}">${formattedValue}</td>`;
         }
     } else {
         for (let col = 0; col < data.length; col++) {
             const value = data[col];
-            html += `<td class="array-cell" style="min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;">${value}</td>`;
+            html += `<td class="array-cell" style="min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;">${escapeHtml(value)}</td>`;
         }
     }
 
@@ -777,7 +867,8 @@ function renderArray2D(data, isNumeric) {
                 const value = data[row][col];
                 const formattedValue = formatArrayValue(value);
                 const bgColor = getHeatmapColor(value, min, max);
-                html += `<td class="array-cell" style="background-color: ${bgColor}; min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;">${formattedValue}</td>`;
+                const missing = value === null ? ' color: var(--vscode-descriptionForeground); font-style: italic;' : '';
+                html += `<td class="array-cell" style="background-color: ${bgColor}; min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;${missing}">${formattedValue}</td>`;
             }
             html += '</tr>';
         }
@@ -787,7 +878,7 @@ function renderArray2D(data, isNumeric) {
             html += `<th class="array-row-header" data-row="${row}" style="height: ${arrayCellHeight}px;">${row}<div class="array-row-resizer" onmousedown="startArrayResize(event, 'row', ${row})"></div></th>`;
             for (let col = 0; col < data[row].length; col++) {
                 const value = data[row][col];
-                html += `<td class="array-cell" style="min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;">${value}</td>`;
+                html += `<td class="array-cell" style="min-width: ${arrayCellWidth}px; height: ${arrayCellHeight}px;">${escapeHtml(value)}</td>`;
             }
             html += '</tr>';
         }
@@ -798,12 +889,17 @@ function renderArray2D(data, isNumeric) {
 }
 
 function getMinMax(flatData) {
-    const numericData = flatData.filter(v => typeof v === 'number' && !isNaN(v));
-    if (numericData.length === 0) return { min: 0, max: 1 };
-    return {
-        min: Math.min(...numericData),
-        max: Math.max(...numericData)
-    };
+    // A plain loop: Math.min(...bigArray) overflows the call stack on large arrays.
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < flatData.length; i++) {
+        const v = flatData[i];
+        if (typeof v === 'number' && !isNaN(v)) {
+            if (v < min) min = v;
+            if (v > max) max = v;
+        }
+    }
+    return min === Infinity ? { min: 0, max: 1 } : { min, max };
 }
 
 function getHeatmapColor(value, min, max) {
@@ -834,7 +930,8 @@ function getHeatmapColor(value, min, max) {
 }
 
 function formatArrayValue(value) {
-    if (typeof value !== 'number') return String(value);
+    if (value === null || value === undefined) return 'nan'; // NaN/inf are sent as null
+    if (typeof value !== 'number') return escapeHtml(value);
 
     // Parse printf-style format
     const match = arrayFormat.match(/%(\d*)(\.(\d+))?([fdeg])/);
@@ -909,254 +1006,253 @@ function refreshArrayDisplay() {
     displayNumpyArray(modalData.array_info, modalData.name);
 }
 
+// ---------------------------------------------------------------------------
+// DataFrame / Series viewer
+//
+// The backend sends   { columns: [...], dtypes: [...], index: [...], data: [[row], ...] }
+// Rows are kept as {pos, idx, v} so sorting/searching never loses the index.
+// ---------------------------------------------------------------------------
+
+function dfColumnWidthEm(label) {
+    const baseWidth = Math.max(String(label).length * 0.6 + 2, 6);
+    return Math.min(baseWidth, 20);
+}
+
 function displayDataFrame(dfInfo, tbody) {
-    const table = document.getElementById('detailTable');
-    const thead = table.querySelector('thead tr');
+    const columns = dfInfo.columns || [];
+    const data = dfInfo.data || [];
+    const index = dfInfo.index || [];
+    const rows = new Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+        rows[i] = { pos: i, idx: index.length ? index[i] : i, v: data[i] };
+    }
 
-    // Reset pagination, column filter, and search when opening new DataFrame
-    dfCurrentPage = 1;
-    dfVisibleColumns = null;
-    dfSearchTerm = '';
-    dfFilteredData = null;
+    dfState = {
+        info: dfInfo,
+        columns,
+        rows,            // current (possibly sorted) order
+        filtered: null,  // rows matching the search, or null
+        searchTerm: '',
+        sortColumn: null, // -1 = index, 0..n-1 = column
+        sortAscending: true,
+        page: 1
+    };
 
-    // Support both old 'head' and new 'data' format
-    const dataRows = dfInfo.data || dfInfo.head || [];
-    const indexName = dfInfo.index_name || 'Index';
-    const hasCustomIndex = dfInfo.has_custom_index || false;
-
-    // Store the total row count for this DataFrame
-    dfTotalRowCount = dataRows.length;
-
-    // Show search box for DataFrames
+    // Search box
     const searchContainer = document.getElementById('dfSearchContainer');
-    const searchInput = document.getElementById('dfSearchInput');
-    const clearSearchBtn = document.getElementById('dfClearSearch');
-
     if (searchContainer) {
+        const searchInput = document.getElementById('dfSearchInput');
+        const clearSearchBtn = document.getElementById('dfClearSearch');
         searchContainer.style.display = 'flex';
-        searchInput.value = '';
-        clearSearchBtn.style.display = 'none';
-
-        // Remove existing event listeners to avoid duplicates
+        // Replace nodes to drop listeners from a previously shown DataFrame
         const newSearchInput = searchInput.cloneNode(true);
+        newSearchInput.value = '';
         searchInput.parentNode.replaceChild(newSearchInput, searchInput);
-
         const newClearBtn = clearSearchBtn.cloneNode(true);
+        newClearBtn.style.display = 'none';
         clearSearchBtn.parentNode.replaceChild(newClearBtn, clearSearchBtn);
 
-        // Add search event listener
+        let searchTimer = null;
         newSearchInput.addEventListener('input', (e) => {
-            dfHandleSearch(e.target.value);
+            clearTimeout(searchTimer);
+            const value = e.target.value;
+            // Debounce: searching 50k rows on every keystroke feels sluggish
+            searchTimer = setTimeout(() => dfHandleSearch(value), rows.length > 5000 ? 200 : 0);
         });
-
-        // Add clear button event listener
         newClearBtn.addEventListener('click', () => {
             newSearchInput.value = '';
             dfHandleSearch('');
         });
     }
 
-    // Update headers for DataFrame view
+    // Header
+    const thead = document.querySelector('#detailTable thead tr');
     thead.innerHTML = '';
-
-    // Add index column header with proper name
+    const indexName = dfInfo.index_name || 'Index';
     const indexHeader = document.createElement('th');
-    indexHeader.innerHTML = `<span class="header-text">${indexName}</span>`;
-    indexHeader.style.minWidth = '80px';
-    indexHeader.style.maxWidth = '200px';
+    indexHeader.innerHTML = '<span class="header-text"></span>';
+    indexHeader.querySelector('.header-text').textContent = indexName;
+    // Size the index column to its labels instead of letting it take all spare width.
+    let longestIndex = indexName.length;
+    for (let i = 0; i < index.length && i < 5000; i++) {
+        const len = index[i] === null || index[i] === undefined ? 3 : String(index[i]).length;
+        if (len > longestIndex) longestIndex = len;
+    }
+    const indexWidth = `${Math.min(Math.max(longestIndex * 0.6 + 2, 4), 16)}em`;
+    indexHeader.style.width = indexWidth;
+    indexHeader.style.minWidth = indexWidth;
+    indexHeader.style.maxWidth = indexWidth;
+    indexHeader.style.whiteSpace = 'nowrap';
+    indexHeader.style.overflow = 'hidden';
+    indexHeader.style.textOverflow = 'ellipsis';
     indexHeader.title = indexName;
-    indexHeader.onclick = () => sortDataFrame(-1); // -1 for index column
     indexHeader.style.cursor = 'pointer';
+    indexHeader.onclick = () => sortDataFrame(-1);
     thead.appendChild(indexHeader);
 
-    // Determine visible columns (all by default)
-    const columnsToShow = dfVisibleColumns || dfInfo.columns;
-
-    // Add column headers from DataFrame
-    columnsToShow.forEach((col, idx) => {
+    columns.forEach((col, idx) => {
         const th = document.createElement('th');
-        th.innerHTML = `<span class="header-text">${col}</span>`;
-
-        // Calculate width based on column name length
-        // Use em units for better scaling with font size
-        const baseWidth = Math.max(col.length * 0.6 + 2, 6); // min 6em (~96px)
-        const maxWidth = Math.min(baseWidth, 20); // cap at 20em (~320px)
-
-        th.style.width = `${maxWidth}em`;
-        th.style.minWidth = `${Math.min(baseWidth, 6)}em`;
-        th.style.maxWidth = `${maxWidth}em`;
+        th.innerHTML = '<span class="header-text"></span>';
+        th.querySelector('.header-text').textContent = col;
+        const width = dfColumnWidthEm(col);
+        th.style.width = `${width}em`;
+        th.style.minWidth = `${Math.min(width, 6)}em`;
+        th.style.maxWidth = `${width}em`;
         th.style.whiteSpace = 'nowrap';
         th.style.overflow = 'hidden';
         th.style.textOverflow = 'ellipsis';
-
-        const dtype = dfInfo.dtypes[col] || 'unknown';
-        th.title = `${col}\nType: ${dtype}`; // Tooltip with column name and type
-        th.onclick = () => sortDataFrame(idx);
+        const dtype = (dfInfo.dtypes && dfInfo.dtypes[idx]) || 'unknown';
+        th.title = `${col}\nType: ${dtype}`;
         th.style.cursor = 'pointer';
+        th.onclick = () => sortDataFrame(idx);
         thead.appendChild(th);
     });
 
-    // Populate rows with pagination
-    if (dataRows && dataRows.length > 0) {
-        renderDataFrameRowsPaginated(dfInfo, tbody, dataRows, indexName, hasCustomIndex, columnsToShow);
-    } else {
+    if (rows.length === 0) {
         const emptyRow = tbody.insertRow();
         const emptyCell = emptyRow.insertCell();
-        emptyCell.colSpan = columnsToShow.length + 1;
+        emptyCell.colSpan = columns.length + 1;
         emptyCell.style.textAlign = 'center';
         emptyCell.style.padding = '20px';
         emptyCell.textContent = 'Empty DataFrame';
+        renderDataFrameFooter(0, 0, 0, 1);
+        return;
     }
+    renderDataFramePage();
 }
 
-function renderDataFrameRowsPaginated(dfInfo, tbody, dataRows, indexName, hasCustomIndex, columnsToShow) {
-    // Use filtered data if search is active, otherwise use all data
-    const displayData = dfFilteredData !== null ? dfFilteredData : dataRows;
+function formatDataFrameCell(cell, value) {
+    if (value === null || value === undefined) {
+        cell.textContent = 'NaN';
+        cell.className = 'value-none';
+        cell.style.fontStyle = 'italic';
+        cell.style.opacity = '0.6';
+        return;
+    }
+    if (typeof value === 'number') {
+        cell.textContent = Number.isInteger(value) ? String(value) : value.toFixed(4);
+        cell.className = 'value-numeric';
+    } else if (typeof value === 'boolean') {
+        cell.textContent = value ? 'True' : 'False';
+        cell.className = 'value-bool';
+    } else {
+        cell.textContent = String(value);
+        cell.className = 'value-string';
+    }
+    cell.title = String(value);
+}
 
-    // Calculate pagination
-    const totalRows = displayData.length;
-    const totalPages = Math.ceil(totalRows / dfRowsPerPage);
-    const startIdx = (dfCurrentPage - 1) * dfRowsPerPage;
+function renderDataFramePage() {
+    if (!dfState) return;
+    const tbody = document.getElementById('detailTableBody');
+    tbody.innerHTML = '';
+
+    const displayRows = dfState.filtered !== null ? dfState.filtered : dfState.rows;
+    const totalRows = displayRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / dfRowsPerPage));
+    dfState.page = Math.min(Math.max(1, dfState.page), totalPages);
+    const startIdx = (dfState.page - 1) * dfRowsPerPage;
     const endIdx = Math.min(startIdx + dfRowsPerPage, totalRows);
-    const rowsToShow = displayData.slice(startIdx, endIdx);
+    const widths = dfState.columns.map(c => `${dfColumnWidthEm(c)}em`);
 
-    // Render rows
-    rowsToShow.forEach((row, displayIndex) => {
-        const actualRowIndex = startIdx + displayIndex;
-        const tr = tbody.insertRow();
-
-        // Add index cell - use custom index if available
+    const fragment = document.createDocumentFragment();
+    for (let r = startIdx; r < endIdx; r++) {
+        const row = displayRows[r];
+        const tr = document.createElement('tr');
         const indexCell = tr.insertCell();
-        let indexValue;
-
-        if (hasCustomIndex && row[indexName] !== undefined) {
-            // Use the preserved index from reset_index()
-            indexValue = row[indexName];
-        } else if (row['index'] !== undefined) {
-            // Fallback to 'index' column from reset_index()
-            indexValue = row['index'];
-        } else {
-            // Fallback to numeric index
-            indexValue = actualRowIndex;
-        }
-
+        const indexValue = row.idx === null || row.idx === undefined ? 'NaN' : String(row.idx);
         indexCell.textContent = indexValue;
+        indexCell.title = indexValue;
         indexCell.style.fontWeight = '600';
-        indexCell.title = String(indexValue);
-
-        // Add data cells
-        columnsToShow.forEach(col => {
+        for (let c = 0; c < dfState.columns.length; c++) {
             const cell = tr.insertCell();
-            const value = row[col];
-
-            // Match header width
-            const baseWidth = Math.max(col.length * 0.6 + 2, 6);
-            const maxWidth = Math.min(baseWidth, 20);
-            cell.style.maxWidth = `${maxWidth}em`;
+            cell.style.maxWidth = widths[c];
             cell.style.overflow = 'hidden';
             cell.style.textOverflow = 'ellipsis';
             cell.style.whiteSpace = 'nowrap';
+            formatDataFrameCell(cell, row.v[c]);
+        }
+        fragment.appendChild(tr);
+    }
+    tbody.appendChild(fragment);
 
-            // Format the value
-            let displayValue;
-            if (value === null || value === undefined) {
-                displayValue = 'NaN';
-                cell.style.fontStyle = 'italic';
-                cell.style.opacity = '0.6';
-            } else if (typeof value === 'number') {
-                // Format numbers to reasonable precision
-                displayValue = Number.isInteger(value) ? value : value.toFixed(4);
-            } else {
-                displayValue = String(value);
-            }
+    if (totalRows === 0) {
+        const tr = tbody.insertRow();
+        const td = tr.insertCell();
+        td.colSpan = dfState.columns.length + 1;
+        td.style.textAlign = 'center';
+        td.style.padding = '20px';
+        td.textContent = 'No matching rows';
+    }
 
-            cell.textContent = displayValue;
-            cell.title = String(value); // Tooltip showing full value
+    renderDataFrameFooter(totalRows, startIdx, endIdx, totalPages);
+}
 
-            // Apply color coding based on type
-            if (typeof value === 'number') {
-                cell.classList.add('value-numeric');
-            } else if (typeof value === 'string') {
-                cell.classList.add('value-string');
-            }
-        });
-    });
-
-    // Add pagination controls to modal footer
+function renderDataFrameFooter(totalRows, startIdx, endIdx, totalPages) {
     const modalFooter = document.getElementById('detailModalFooter');
+    const info = dfState.info;
+    const page = dfState.page;
+    const exportButton = `
+        <button id="exportCSVBtn" class="pagination-btn" title="Export all rows to CSV" style="padding: 6px;">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M13.5 3h-11L2 4v8l.5 1h11l.5-1V4l-.5-1zm-.5 9H3V4h10v8z"/>
+                <path d="M8.5 6h-1v3.5L6 8v1l2 1.5L10 9V8L8.5 9.5V6z"/>
+            </svg>
+        </button>`;
+    const fullShape = info.shape || [dfState.rows.length, dfState.columns.length];
+    const truncationNote = info.truncated
+        ? `<div class="truncation-note">Loaded first ${Number(info.loaded_rows).toLocaleString()} of ${Number(fullShape[0]).toLocaleString()} rows (setting: variableExplorer.maxDataFrameRows)</div>`
+        : '';
 
-    // Show controls if there's enough data to paginate (>100 rows total)
-    // OR if pagination is active (totalPages > 1)
-    const needsPagination = dfTotalRowCount > 100 || totalPages > 1;
+    modalFooter.style.display = 'flex';
+    modalFooter.style.justifyContent = 'space-between';
+    modalFooter.style.flexWrap = 'wrap';
 
-    if (needsPagination) {
-        // Show footer with pagination controls and export button
-        modalFooter.style.display = 'flex';
-        modalFooter.style.justifyContent = 'space-between';
+    if (dfState.rows.length > 100 || totalPages > 1) {
+        const firstDisabled = page === 1 ? 'disabled' : '';
+        const lastDisabled = page === totalPages ? 'disabled' : '';
+        const options = [50, 100, 250, 500].map(n =>
+            `<option value="${n}" ${dfRowsPerPage === n ? 'selected' : ''}>${n}</option>`).join('');
+        const allSelected = ![50, 100, 250, 500].includes(dfRowsPerPage) ? 'selected' : '';
         modalFooter.innerHTML = `
-            <button id="exportCSVBtn" class="pagination-btn" title="Export to CSV" style="padding: 6px;">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M13.5 3h-11L2 4v8l.5 1h11l.5-1V4l-.5-1zm-.5 9H3V4h10v8z"/>
-                    <path d="M8.5 6h-1v3.5L6 8v1l2 1.5L10 9V8L8.5 9.5V6z"/>
-                </svg>
-            </button>
+            ${exportButton}
             <div style="display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: var(--vscode-foreground);">
-                <button onclick="dfChangePage(1)" ${dfCurrentPage === 1 || totalPages === 1 ? 'disabled' : ''} class="pagination-btn" title="First page">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M2 2v12h2V2H2zm3 0l9 6-9 6V2z"/>
-                    </svg>
+                <button onclick="dfChangePage(1)" ${firstDisabled} class="pagination-btn" title="First page">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2v12h2V2H2zm3 0l9 6-9 6V2z"/></svg>
                 </button>
-                <button onclick="dfChangePage(${dfCurrentPage - 1})" ${dfCurrentPage === 1 || totalPages === 1 ? 'disabled' : ''} class="pagination-btn" title="Previous page">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M11 2L5 8l6 6V2z"/>
-                    </svg>
+                <button onclick="dfChangePage(${page - 1})" ${firstDisabled} class="pagination-btn" title="Previous page">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2L5 8l6 6V2z"/></svg>
                 </button>
                 <span style="margin: 0 8px; font-size: 12px; opacity: 0.8;">
-                    ${totalPages === 1 ? 'Page 1 / 1' : `${dfCurrentPage} / ${totalPages}`}
-                    <span style="opacity: 0.6; margin-left: 4px;">(${startIdx + 1}-${endIdx} of ${totalRows})</span>
+                    ${page} / ${totalPages}
+                    <span style="opacity: 0.6; margin-left: 4px;">(${totalRows ? startIdx + 1 : 0}-${endIdx} of ${totalRows.toLocaleString()})</span>
                 </span>
-                <button onclick="dfChangePage(${dfCurrentPage + 1})" ${dfCurrentPage === totalPages || totalPages === 1 ? 'disabled' : ''} class="pagination-btn" title="Next page">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M5 14l6-6-6-6v12z"/>
-                    </svg>
+                <button onclick="dfChangePage(${page + 1})" ${lastDisabled} class="pagination-btn" title="Next page">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M5 14l6-6-6-6v12z"/></svg>
                 </button>
-                <button onclick="dfChangePage(${totalPages})" ${dfCurrentPage === totalPages || totalPages === 1 ? 'disabled' : ''} class="pagination-btn" title="Last page">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M12 2H10v12h2V2zM2 8l9-6v12L2 8z"/>
-                    </svg>
+                <button onclick="dfChangePage(${totalPages})" ${lastDisabled} class="pagination-btn" title="Last page">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M12 2H10v12h2V2zM2 8l9-6v12L2 8z"/></svg>
                 </button>
                 <div style="margin-left: 12px; border-left: 1px solid var(--vscode-panel-border); padding-left: 12px;">
                     <select onchange="dfChangeRowsPerPage(this.value)" class="pagination-select">
-                        <option value="50" ${dfRowsPerPage === 50 ? 'selected' : ''}>50</option>
-                        <option value="100" ${dfRowsPerPage === 100 ? 'selected' : ''}>100</option>
-                        <option value="250" ${dfRowsPerPage === 250 ? 'selected' : ''}>250</option>
-                        <option value="500" ${dfRowsPerPage === 500 ? 'selected' : ''}>500</option>
-                        <option value="${totalRows}" ${dfRowsPerPage >= totalRows ? 'selected' : ''}>All</option>
+                        ${options}
+                        <option value="all" ${allSelected}>All</option>
                     </select>
                     <span style="margin-left: 4px; font-size: 11px; opacity: 0.6;">rows</span>
                 </div>
             </div>
             <div style="width: 100px;"></div>
-        `;
+            ${truncationNote}`;
     } else {
-        // Show footer with info text and export button for small DataFrames
-        modalFooter.style.display = 'flex';
-        modalFooter.style.justifyContent = 'space-between';
         modalFooter.innerHTML = `
-            <button id="exportCSVBtn" class="pagination-btn" title="Export to CSV" style="padding: 6px;">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M13.5 3h-11L2 4v8l.5 1h11l.5-1V4l-.5-1zm-.5 9H3V4h10v8z"/>
-                    <path d="M8.5 6h-1v3.5L6 8v1l2 1.5L10 9V8L8.5 9.5V6z"/>
-                </svg>
-            </button>
+            ${exportButton}
             <div style="font-style: italic; opacity: 0.7; font-size: 12px;">
-                ${totalRows} rows × ${dfInfo.columns.length} columns
+                ${Number(fullShape[0]).toLocaleString()} rows × ${dfState.columns.length} columns
             </div>
             <div style="width: 100px;"></div>
-        `;
+            ${truncationNote}`;
     }
 
-    // Attach event listener to export button after it's added to DOM
     const exportBtn = document.getElementById('exportCSVBtn');
     if (exportBtn) {
         exportBtn.addEventListener('click', exportDataFrameToCSV);
@@ -1164,122 +1260,131 @@ function renderDataFrameRowsPaginated(dfInfo, tbody, dataRows, indexName, hasCus
 }
 
 function dfChangePage(page) {
-    if (!modalData || !modalData.dataframe_info) return;
-    dfCurrentPage = page;
-
-    const tbody = document.getElementById('detailTableBody');
-    tbody.innerHTML = '';
-
-    const dfInfo = modalData.dataframe_info;
-    const dataRows = dfInfo.data || dfInfo.head || [];
-    const indexName = dfInfo.index_name || 'Index';
-    const hasCustomIndex = dfInfo.has_custom_index || false;
-    const columnsToShow = dfVisibleColumns || dfInfo.columns;
-
-    renderDataFrameRowsPaginated(dfInfo, tbody, dataRows, indexName, hasCustomIndex, columnsToShow);
+    if (!dfState) return;
+    dfState.page = page;
+    renderDataFramePage();
 }
 
 function dfChangeRowsPerPage(value) {
-    dfRowsPerPage = parseInt(value);
-    dfCurrentPage = 1; // Reset to first page
-    dfChangePage(1);
+    dfRowsPerPage = value === 'all' ? Number.MAX_SAFE_INTEGER : parseInt(value, 10);
+    if (dfState) {
+        dfState.page = 1;
+        renderDataFramePage();
+    }
 }
 
-function renderDataFrameRows(dfInfo, tbody) {
-    // Legacy function - kept for backward compatibility
-    // Redirect to new paginated version
-    const dataRows = dfInfo.head || [];
-    const indexName = 'Index';
-    const hasCustomIndex = false;
-    const columnsToShow = dfInfo.columns;
-    renderDataFrameRowsPaginated(dfInfo, tbody, dataRows, indexName, hasCustomIndex, columnsToShow);
+function compareDataFrameValues(a, b) {
+    const aMissing = a === null || a === undefined;
+    const bMissing = b === null || b === undefined;
+    if (aMissing || bMissing) {
+        return aMissing === bMissing ? 0 : (aMissing ? 1 : -1);
+    }
+    if (typeof a === 'number' && typeof b === 'number') {
+        return a - b;
+    }
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 }
 
 function sortDataFrame(columnIndex) {
-    if (!modalData || !modalData.dataframe_info) return;
-
-    const dfInfo = modalData.dataframe_info;
-    const dataRows = dfInfo.data || dfInfo.head || [];
-    const indexName = dfInfo.index_name || 'Index';
-    const hasCustomIndex = dfInfo.has_custom_index || false;
-
-    // Determine if we're sorting by the same column
-    if (modalSortColumn === columnIndex) {
-        modalSortAscending = !modalSortAscending;
+    if (!dfState) return;
+    if (dfState.sortColumn === columnIndex) {
+        dfState.sortAscending = !dfState.sortAscending;
     } else {
-        modalSortColumn = columnIndex;
-        modalSortAscending = true;
+        dfState.sortColumn = columnIndex;
+        dfState.sortAscending = true;
     }
-
-    updateDataFrameHeaderIndicators();
-
-    // Create a sorted copy of the data
-    const sortedData = [...dataRows].sort((a, b) => {
-        let valA, valB;
-
-        if (columnIndex === -1) {
-            // Sorting by index column
-            if (hasCustomIndex && a[indexName] !== undefined) {
-                valA = a[indexName];
-                valB = b[indexName];
-            } else if (a['index'] !== undefined) {
-                valA = a['index'];
-                valB = b['index'];
-            } else {
-                valA = dataRows.indexOf(a);
-                valB = dataRows.indexOf(b);
-            }
-        } else {
-            // Sorting by a data column
-            const colName = dfInfo.columns[columnIndex];
-            valA = a[colName];
-            valB = b[colName];
+    const dir = dfState.sortAscending ? 1 : -1;
+    const get = columnIndex === -1 ? (row => row.idx) : (row => row.v[columnIndex]);
+    dfState.rows.sort((ra, rb) => {
+        const a = get(ra);
+        const b = get(rb);
+        // Missing values always go last, whatever the direction
+        const aMissing = a === null || a === undefined;
+        const bMissing = b === null || b === undefined;
+        if (aMissing || bMissing) {
+            return aMissing === bMissing ? ra.pos - rb.pos : (aMissing ? 1 : -1);
         }
-
-        // Handle null/undefined values
-        if (valA === null || valA === undefined) return modalSortAscending ? 1 : -1;
-        if (valB === null || valB === undefined) return modalSortAscending ? -1 : 1;
-
-        // Numeric comparison
-        if (typeof valA === 'number' && typeof valB === 'number') {
-            return modalSortAscending ? valA - valB : valB - valA;
-        }
-
-        // String comparison
-        const strA = String(valA).toLowerCase();
-        const strB = String(valB).toLowerCase();
-        if (strA < strB) return modalSortAscending ? -1 : 1;
-        if (strA > strB) return modalSortAscending ? 1 : -1;
-        return 0;
+        return (compareDataFrameValues(a, b) * dir) || (ra.pos - rb.pos);
     });
-
-    // Update the modalData with sorted data
-    const sortedDfInfo = { ...dfInfo, data: sortedData, head: sortedData };
-
-    // Re-render the table
-    const tbody = document.getElementById('detailTableBody');
-    tbody.innerHTML = '';
-
-    const columnsToShow = dfVisibleColumns || dfInfo.columns;
-    renderDataFrameRowsPaginated(sortedDfInfo, tbody, sortedData, indexName, hasCustomIndex, columnsToShow);
+    if (dfState.searchTerm) {
+        dfState.filtered = filterDataFrameRows(dfState.rows, dfState.searchTerm);
+    }
+    dfState.page = 1;
+    updateDataFrameHeaderIndicators();
+    renderDataFramePage();
 }
 
 function updateDataFrameHeaderIndicators() {
-    const headers = document.querySelectorAll('#detailTable th');
+    const headers = document.querySelectorAll('#detailTable thead th');
     headers.forEach((header, index) => {
         const textSpan = header.querySelector('.header-text');
         if (!textSpan) return;
+        const text = textSpan.textContent.replace(/ [▲▼]$/, '');
+        const headerColumnIndex = index - 1; // the index column is -1
+        textSpan.textContent = headerColumnIndex === dfState.sortColumn
+            ? text + (dfState.sortAscending ? ' ▲' : ' ▼')
+            : text;
+    });
+}
 
-        const text = textSpan.textContent.replace(' ▲', '').replace(' ▼', '');
-
-        // Account for index column being at position -1
-        const headerColumnIndex = index - 1;
-
-        if (headerColumnIndex === modalSortColumn) {
-            textSpan.textContent = text + (modalSortAscending ? ' ▲' : ' ▼');
-        } else {
-            textSpan.textContent = text;
+function filterDataFrameRows(rows, term) {
+    return rows.filter(row => {
+        if (row.idx !== null && row.idx !== undefined && String(row.idx).toLowerCase().includes(term)) {
+            return true;
         }
+        const values = row.v;
+        for (let c = 0; c < values.length; c++) {
+            const value = values[c];
+            if (value !== null && value !== undefined && String(value).toLowerCase().includes(term)) {
+                return true;
+            }
+        }
+        return false;
+    });
+}
+
+function dfHandleSearch(searchTerm) {
+    if (!dfState) return;
+    dfState.searchTerm = String(searchTerm || '').toLowerCase().trim();
+    dfState.page = 1;
+    const clearBtn = document.getElementById('dfClearSearch');
+    if (clearBtn) {
+        clearBtn.style.display = dfState.searchTerm ? 'flex' : 'none';
+    }
+    dfState.filtered = dfState.searchTerm ? filterDataFrameRows(dfState.rows, dfState.searchTerm) : null;
+    renderDataFramePage();
+}
+
+// Without a search, the CSV is written by pandas in the backend, so it
+// contains every row (not just the rows loaded into the viewer).
+function csvEscape(value) {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    return /[",\n\r]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+}
+
+function exportDataFrameToCSV() {
+    if (!modalData || !modalData.dataframe_info) return;
+    if (dfState && dfState.filtered !== null) {
+        // Search active: export just the matching rows, as shown.
+        const info = dfState.info;
+        const lines = [[info.index_name || 'Index', ...dfState.columns].map(csvEscape).join(',')];
+        for (const row of dfState.filtered) {
+            lines.push([row.idx, ...row.v].map(csvEscape).join(','));
+        }
+        vscode.postMessage({
+            command: 'exportCSV',
+            name: modalData.name,
+            csvData: lines.join('\n') + '\n',
+            rowCount: dfState.filtered.length,
+            columnCount: dfState.columns.length
+        });
+        return;
+    }
+    vscode.postMessage({
+        command: 'exportCSV',
+        name: modalData.name,
+        path: modalData.path || []
     });
 }
 
@@ -1366,37 +1471,26 @@ function closeModal() {
     const modal = document.getElementById('detailModal');
     modal.style.display = 'none';
 
-    // Clean up array container if it exists
     const arrayContainer = document.getElementById('arrayContainer');
     if (arrayContainer) {
         arrayContainer.remove();
     }
-
-    // Show the table again
-    const table = document.getElementById('detailTable');
-    table.style.display = 'table';
-
-    // Reset headers back to default when closing
-    const thead = table.querySelector('thead tr');
-    thead.innerHTML = `
-        <th style="width: 20%;">
-            Key
-            <div class="resizer" onmousedown="startResize(event, 0, true)"></div>
-        </th>
-        <th style="width: 20%;">
-            Type
-            <div class="resizer" onmousedown="startResize(event, 1, true)"></div>
-        </th>
-        <th style="width: 15%;">
-            Size
-            <div class="resizer" onmousedown="startResize(event, 2, true)"></div>
-        </th>
-        <th style="width: 45%;">
-            Value
-            <div class="resizer" onmousedown="startResize(event, 3, true)"></div>
-        </th>
-    `;
+    document.getElementById('detailTable').style.display = 'table';
+    document.getElementById('detailTableBody').innerHTML = '';
+    resetDetailHeaders();
+    dfState = null;
+    modalData = null;
 }
+
+// Close modals with Escape
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (document.getElementById('editorModal').style.display === 'block') {
+        closeEditorModal();
+    } else if (document.getElementById('detailModal').style.display === 'block') {
+        closeModal();
+    }
+});
 
 // Handle clicking outside modals to close them
 window.onclick = function(event) {
@@ -1536,10 +1630,6 @@ function stopArrayResize() {
 // Add array resize listeners
 document.addEventListener('mousemove', doArrayResize);
 document.addEventListener('mouseup', stopArrayResize);
-
-function closeModal() {
-    document.getElementById('detailModal').style.display = 'none';
-}
 
 function clearVars() {
     console.log('clearVars called');
@@ -1761,131 +1851,3 @@ function changeColorPalette(palette) {
 }
 
 // Export DataFrame to CSV
-function exportDataFrameToCSV() {
-    console.log('Export button clicked!');
-    console.log('modalData:', modalData);
-
-    if (!modalData) {
-        console.error('modalData is null or undefined');
-        return;
-    }
-
-    if (!modalData.dataframe_info) {
-        console.error('No dataframe_info in modalData');
-        console.log('modalData structure:', Object.keys(modalData));
-        return;
-    }
-
-    const dfInfo = modalData.dataframe_info;
-    const data = dfInfo.data || [];
-    const columns = dfInfo.columns || [];
-    const indexName = dfInfo.index_name || 'Index';
-    const hasCustomIndex = dfInfo.has_custom_index || false;
-
-    console.log(`Preparing to export: ${data.length} rows, ${columns.length} columns`);
-
-    if (data.length === 0) {
-        console.warn('DataFrame is empty, nothing to export');
-        return;
-    }
-
-    // Helper function to escape CSV values
-    function escapeCSV(value) {
-        if (value === null || value === undefined) {
-            return '';
-        }
-        const str = String(value);
-        // If value contains comma, quote, or newline, wrap in quotes and escape quotes
-        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-            return '"' + str.replace(/"/g, '""') + '"';
-        }
-        return str;
-    }
-
-    // Build CSV content
-    let csv = '';
-
-    // Add header row
-    const headers = [];
-    if (hasCustomIndex) {
-        headers.push(indexName);
-    }
-    headers.push(...columns);
-    csv += headers.map(escapeCSV).join(',') + '\n';
-
-    // Add data rows
-    data.forEach(row => {
-        const values = [];
-
-        // Add index value if custom index exists
-        if (hasCustomIndex && row[indexName] !== undefined) {
-            values.push(escapeCSV(row[indexName]));
-        } else if (row['index'] !== undefined) {
-            values.push(escapeCSV(row['index']));
-        }
-
-        // Add column values
-        columns.forEach(col => {
-            values.push(escapeCSV(row[col]));
-        });
-
-        csv += values.join(',') + '\n';
-    });
-
-    // Generate filename from variable name
-    const fileName = `${modalData.name || 'dataframe'}_export.csv`;
-
-    // Send CSV data to VS Code extension for file save
-    vscode.postMessage({
-        command: 'exportCSV',
-        fileName: fileName,
-        csvData: csv,
-        rowCount: data.length,
-        columnCount: columns.length
-    });
-
-    console.log(`Exported ${data.length} rows to ${fileName}`);
-}
-
-// Handle DataFrame search/filter
-function dfHandleSearch(searchTerm) {
-    if (!modalData || !modalData.dataframe_info) return;
-
-    dfSearchTerm = searchTerm.toLowerCase().trim();
-    dfCurrentPage = 1; // Reset to first page when searching
-
-    const dfInfo = modalData.dataframe_info;
-    const allData = dfInfo.data || [];
-
-    // Show/hide clear button
-    const clearBtn = document.getElementById('dfClearSearch');
-    if (clearBtn) {
-        clearBtn.style.display = dfSearchTerm ? 'flex' : 'none';
-    }
-
-    if (!dfSearchTerm) {
-        // No search term - show all data
-        dfFilteredData = null;
-    } else {
-        // Filter data - search across all columns
-        dfFilteredData = allData.filter(row => {
-            // Search in all column values
-            return dfInfo.columns.some(col => {
-                const value = row[col];
-                if (value === null || value === undefined) return false;
-                return String(value).toLowerCase().includes(dfSearchTerm);
-            });
-        });
-    }
-
-    // Re-render the DataFrame with filtered data
-    const tbody = document.getElementById('detailTableBody');
-    tbody.innerHTML = ''; // Clear existing rows
-
-    // Get the visible columns (same logic as displayDataFrame)
-    const columnsToShow = dfVisibleColumns || dfInfo.columns;
-
-    // Re-render with current filter
-    renderDataFrameRowsPaginated(dfInfo, tbody, allData, dfInfo.index_name || 'Index', dfInfo.has_custom_index || false, columnsToShow);
-}
-

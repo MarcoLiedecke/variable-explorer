@@ -130,7 +130,7 @@ The Variable Explorer works with Python code executed through:
 
 | Action | Shortcut |
 |--------|----------|
-| Run Python file | `F5` |
+| Run Python file | `F5` (disable with `variableExplorer.useF5Keybinding`; never overrides an active debug session) |
 | Run selection/line | `F9` or `Shift+Enter` |
 | Save inline edit | `Enter` |
 | Cancel inline edit | `Escape` |
@@ -184,28 +184,55 @@ Variable Explorer supports 33+ data types with distinct color coding:
 
 The extension provides the following settings:
 
-```json
+```jsonc
 {
-  // Python interpreter path (auto-detects if empty)
+  // Python interpreter. Supports ${workspaceFolder}, ${env:VAR} and ~.
+  // Empty = auto-detect (see below).
   "variableExplorer.pythonPath": "",
+
+  // Extra folders added to sys.path (like PYTHONPATH). The running file's own
+  // folder is always added, so `import config` next to your script just works.
+  "variableExplorer.extraPaths": ["${workspaceFolder}/src"],
+
+  // Re-import modules from your workspace on every run, so edits to helper
+  // modules take effect without restarting (like Spyder's User Module Reloader).
+  "variableExplorer.reloadUserModules": true,
 
   // Expose local variables from main() function
   "variableExplorer.captureMainLocals": false,
 
-  // Monitor terminal for Python execution
-  "variableExplorer.monitorTerminalExecution": true
+  // Mirror "Run Python File" terminal runs into the Variable Explorer
+  "variableExplorer.monitorTerminalExecution": true,
+
+  // Rows of a DataFrame/Series loaded into the viewer (CSV export always writes all rows)
+  "variableExplorer.maxDataFrameRows": 50000,
+
+  // Show the "Variable Explorer" output channel (prints + tracebacks) on F5/F9
+  "variableExplorer.showOutputOnRun": true,
+
+  // Use F5 to run the current file (set to false to keep F5 for the debugger)
+  "variableExplorer.useF5Keybinding": true
 }
 ```
 
-**Python Path**: Leave empty to auto-detect. Uses `python3` on macOS/Linux, `python` on Windows. Falls back to the Python extension's interpreter if available.
+**Which Python is used?** The first of these that works:
+1. `variableExplorer.pythonPath`
+2. The interpreter selected in the Python extension (**Python: Select Interpreter**), i.e. the same one "Run Python File" uses
+3. `python.defaultInterpreterPath`
+4. A `.venv`, `venv` or `env` folder in the workspace (e.g. created by `uv`)
+5. `python3` / `python` (and `py` on Windows) on `PATH`
+
+If a candidate can't start (missing, wrong path, crashes), the next one is tried. The **Variable Explorer** output channel shows which interpreter was used and why others were skipped. When you switch interpreters, Variable Explorer offers to restart its backend.
+
+**How code runs:** like `python your_file.py` from the workspace folder: the file's folder is `sys.path[0]`, the working directory is the workspace folder (or the file's folder if `python.terminal.executeInFileDir` is on), `__name__ == "__main__"`, and `sys.argv[0]` is the file. `print()` output and tracebacks go to the **Variable Explorer** output channel. numpy and pandas are optional; they're only needed if your code uses them.
 
 ## Tips & Tricks
 
 1. **DataFrame Search**: Type in the search box to instantly filter DataFrame rows across all columns
-2. **Export Filtered Data**: Search for specific rows, then click the export icon to save only those rows to CSV
+2. **Export Filtered Data**: Search for specific rows, then click the export icon to save only those rows to CSV. Without a search, the export contains every row, even beyond `maxDataFrameRows`
 3. **Nested dictionaries**: Click through JSON-like structures by clicking on dict/list values in the modal
 4. **DataFrames with custom indices**: Use `df.set_index('column_name')` and the index will be preserved with the correct name
-5. **Large DataFrames**: All rows and columns are loaded - use pagination to navigate or search to filter
+5. **Large DataFrames**: Up to `variableExplorer.maxDataFrameRows` rows (default 50,000) are loaded - use pagination to navigate or search to filter
 6. **Wide DataFrames**: Scroll horizontally to see all columns, or use search to find specific data
 7. **DataFrame navigation**: Change rows per page (50/100/250/500/All) using the dropdown in pagination controls
 8. **main() function locals**: Enable "Capture main() locals" in settings to inspect variables inside your main() function
@@ -219,10 +246,20 @@ The extension provides the following settings:
 
 ## Troubleshooting
 
-**Variables not showing:**
-- Ensure you've run Python code first
-- Click the refresh button
-- Check that Python is properly configured
+**Variables not showing / "No module named ..." / backend not starting:**
+- Open the **Variable Explorer** output channel (click the Python version in the toolbar, or run **Variable Explorer: Show Output**). It lists the interpreter that was used, every interpreter that was tried, and the full traceback of your script.
+- Make sure the right interpreter is selected (**Python: Select Interpreter**), or set `variableExplorer.pythonPath`.
+- Imports from other folders: add them to `variableExplorer.extraPaths`.
+- Run **Variable Explorer: Restart Python Backend** to start fresh.
+
+**Code is stuck (infinite loop, waiting on something):**
+- Click the stop button in the toolbar or the status bar item, or run **Variable Explorer: Interrupt Running Code**. On Windows this restarts the backend instead.
+
+**F5 doesn't start the debugger:**
+- Set `"variableExplorer.useF5Keybinding": false`.
+
+**Jupyter "Run in Interactive Window":**
+- Code run in a Jupyter kernel isn't visible to Variable Explorer; use F5 / F9 / **Run Python File (Terminal + Variable Explorer)** instead.
 
 **Edit not working:**
 - Verify the variable type is supported for editing
@@ -235,9 +272,8 @@ The extension provides the following settings:
 ## Requirements
 
 - Visual Studio Code 1.80.0 or higher
-- Python 3.6 or higher
-- pandas (for DataFrame support)
-- numpy (for NumPy array support)
+- Python 3.7 or higher
+- Optional: pandas (for DataFrame/Series views), numpy (for array views)
 
 ## Contributing
 
@@ -249,7 +285,18 @@ MIT License - See LICENSE file for details
 
 ## Changelog
 
-### Version 0.2.1 (Latest)
+### Version 0.3.0 (Latest)
+- **Uses the right Python** (#5, #7): uses the interpreter selected in the Python extension, expands `${workspaceFolder}`/`${env:...}`/`~` in paths, finds workspace `.venv`s (uv, venv), accepts venv folders, and falls back to the next candidate instead of failing. The output channel explains what was tried.
+- **Imports work like `python file.py`** (#5, #7): the script's folder is on `sys.path`, plus the new `variableExplorer.extraPaths` setting. Edited helper modules are re-imported on each run (`variableExplorer.reloadUserModules`).
+- **Timestamps, UUIDs, Decimals, NaN, ...** (#6): DataFrames/arrays containing them no longer fail to open. Previously any NaN or Timestamp silently broke the detail view.
+- **Robust backend**: `sys.exit()`, `input()`, stray output from C extensions or subprocesses and crashes no longer kill or corrupt the backend; it restarts automatically on the next run. New **Restart Python Backend** and **Interrupt Running Code** commands, plus a running indicator.
+- **No numpy/pandas required**: the backend starts in milliseconds and works on interpreters without the scientific stack.
+- **Output channel**: `print()` output and full tracebacks of F5/F9 runs are shown in the "Variable Explorer" output channel.
+- **F5**: no longer hijacks F5 during a debug session; can be disabled with `variableExplorer.useF5Keybinding`.
+- **Faster**: large DataFrames load several times faster (compact row format, linear-time message parsing, configurable `variableExplorer.maxDataFrameRows`), huge lists/strings no longer slow down the variable table, and CSV export of the full DataFrame is written by pandas.
+- **Fixes**: values containing `<`/`>` are displayed as text instead of being interpreted as HTML; editing a long string no longer truncates it; DataFrame sorting now persists across pages; header of list views no longer stays in DataFrame mode; dict keys that aren't strings can be navigated; numpy scalar types are preserved when editing; 3-D+ arrays show their first 2-D slice; Series open in the table viewer; "Run Python File (Terminal + Variable Explorer)" no longer runs the file twice in the Variable Explorer; F5 saves the file before running; F9 on an indented block works and shows the value of a trailing expression; terminal detection handles paths with spaces, `py`, `uv run` and PowerShell.
+
+### Version 0.2.1
 - **Session Save/Load**: Save your entire variable namespace to a `.pkl` file and restore it later
   - Uses `dill` serializer if available for better type support, falls back to `pickle`
   - Preserves DataFrames, arrays, and most Python objects between sessions

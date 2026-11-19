@@ -43,7 +43,14 @@ function getWebviewContent(webview, extensionPath) {
                 </svg>
                 <span class="tooltip">Load Session</span>
             </button>
+            <button onclick="interruptExecution()" id="interruptBtn" style="display: none;">
+                <svg viewBox="0 0 24 24">
+                    <path d="M6 6h12v12H6z"/>
+                </svg>
+                <span class="tooltip">Interrupt</span>
+            </button>
             <div class="toolbar-spacer"></div>
+            <span id="statusText" class="status-text" onclick="showOutput()"></span>
             <div class="search-container">
                 <button onclick="toggleSearch()" id="searchBtn">
                     <svg viewBox="0 0 24 24">
